@@ -57,6 +57,7 @@ pub struct Doom {
     hurt_cd: i32,
     alive: bool,
     won: bool,
+    paused: bool,
     last: Instant,
     snd: Option<Snd>,
 }
@@ -89,6 +90,7 @@ impl Doom {
             hurt_cd: 0,
             alive: true,
             won: false,
+            paused: false,
             last: Instant::now(),
             snd: None,
         }
@@ -157,7 +159,22 @@ fn shade(level: u8, x: i32, y: i32) -> bool {
 }
 
 impl Game for Doom {
+    fn can_pause(&self) -> bool { true }
+    fn is_paused(&self) -> bool { self.paused }
+    fn set_paused(&mut self, p: bool) {
+        if self.alive {
+            self.paused = p;
+            self.last = Instant::now();
+        }
+    }
     fn press(&mut self, b: Btn, _t: &Trng) -> bool {
+        if self.paused {
+            if b == Btn::Ok {
+                self.paused = false;
+                self.last = Instant::now();
+            }
+            return true;
+        }
         if b == Btn::Ok {
             self.fire();
             return true;
@@ -171,7 +188,7 @@ impl Game for Doom {
     }
 
     fn update(&mut self, _t: &Trng) -> bool {
-        if !self.alive || self.last.elapsed().as_millis() < TICK_MS {
+        if !self.alive || self.paused || self.last.elapsed().as_millis() < TICK_MS {
             return false;
         }
         self.last = Instant::now();

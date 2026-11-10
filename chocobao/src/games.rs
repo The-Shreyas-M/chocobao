@@ -31,6 +31,10 @@ pub trait Game {
     fn take_sound(&mut self) -> Option<Snd>;
     /// Reaction test: a smaller score is better.
     fn lower_is_better(&self) -> bool { false }
+    /// Pausing: games that support it return true from `can_pause`; BACK pauses first, a second BACK quits.
+    fn can_pause(&self) -> bool { false }
+    fn is_paused(&self) -> bool { false }
+    fn set_paused(&mut self, _p: bool) {}
 }
 
 pub struct Entry {
@@ -122,6 +126,14 @@ impl Dodger {
 }
 
 impl Game for Dodger {
+    fn can_pause(&self) -> bool { true }
+    fn is_paused(&self) -> bool { self.paused }
+    fn set_paused(&mut self, p: bool) {
+        if self.alive {
+            self.paused = p;
+            self.last = Instant::now();
+        }
+    }
     fn press(&mut self, b: Btn, _t: &Trng) -> bool {
         match b {
             Btn::Left => self.step(-1),
@@ -174,11 +186,6 @@ impl Game for Dodger {
         let (x, y) = (self.px * 8, D_TOP + (D_ROWS - 1) * 8);
         c.fill_rect(x + 1, y + 3, 6, 5, true);
         c.fill_rect(x + 3, y + 1, 2, 2, true);
-        if self.paused {
-            c.fill_rect(20, 24, 88, 24, false);
-            c.rect(20, 24, 88, 24);
-            c.text(32, 30, "PAUSED - OK");
-        }
         if !self.alive {
             game_over_box(c, "GAME OVER");
         }
@@ -238,6 +245,14 @@ impl Snake {
 }
 
 impl Game for Snake {
+    fn can_pause(&self) -> bool { true }
+    fn is_paused(&self) -> bool { self.paused }
+    fn set_paused(&mut self, p: bool) {
+        if self.alive {
+            self.paused = p;
+            self.last = Instant::now();
+        }
+    }
     fn press(&mut self, b: Btn, _t: &Trng) -> bool {
         let want = match b {
             Btn::Up => (0, -1),
@@ -300,11 +315,6 @@ impl Game for Snake {
         }
         let (fx, fy) = (self.food.0 as usize * S_CELL, S_TOP + self.food.1 as usize * S_CELL);
         c.rect(fx, fy, S_CELL, S_CELL);
-        if self.paused {
-            c.fill_rect(20, 24, 88, 24, false);
-            c.rect(20, 24, 88, 24);
-            c.text(32, 30, "PAUSED - OK");
-        }
         if !self.alive {
             game_over_box(c, "GAME OVER");
         }
@@ -355,6 +365,14 @@ impl Pong {
 }
 
 impl Game for Pong {
+    fn can_pause(&self) -> bool { true }
+    fn is_paused(&self) -> bool { self.paused }
+    fn set_paused(&mut self, p: bool) {
+        if self.alive {
+            self.paused = p;
+            self.last = Instant::now();
+        }
+    }
     fn press(&mut self, b: Btn, _t: &Trng) -> bool {
         if b == Btn::Ok && self.alive {
             self.paused = !self.paused;
@@ -432,11 +450,6 @@ impl Game for Pong {
         c.fill_rect(4, self.me as usize, 3, P_H as usize, true);
         c.fill_rect(121, self.ai as usize, 3, P_H as usize, true);
         c.fill_rect((self.bx.clamp(0, 125)) as usize, (self.by - 1).max(0) as usize, 3, 3, true);
-        if self.paused {
-            c.fill_rect(20, 24, 88, 24, false);
-            c.rect(20, 24, 88, 24);
-            c.text(32, 30, "PAUSED - OK");
-        }
         if !self.alive {
             game_over_box(c, "MISSED!");
         }
@@ -456,6 +469,7 @@ pub struct Flappy {
     score: u32,
     alive: bool,
     started: bool,
+    paused: bool,
     last: Instant,
     snd: Option<Snd>,
 }
@@ -470,6 +484,7 @@ impl Flappy {
             score: 0,
             alive: true,
             started: false,
+            paused: false,
             last: Instant::now(),
             snd: None,
         }
@@ -477,7 +492,22 @@ impl Flappy {
 }
 
 impl Game for Flappy {
+    fn can_pause(&self) -> bool { true }
+    fn is_paused(&self) -> bool { self.paused }
+    fn set_paused(&mut self, p: bool) {
+        if self.alive && self.started {
+            self.paused = p;
+            self.last = Instant::now();
+        }
+    }
     fn press(&mut self, b: Btn, _t: &Trng) -> bool {
+        if self.paused {
+            if matches!(b, Btn::Ok | Btn::Up) {
+                self.paused = false;
+                self.last = Instant::now();
+            }
+            return true;
+        }
         if matches!(b, Btn::Ok | Btn::Up) && self.alive {
             self.started = true;
             self.vy = -18; // one flap lifts the bird about 11 px
@@ -487,7 +517,7 @@ impl Game for Flappy {
         false
     }
     fn update(&mut self, trng: &Trng) -> bool {
-        if !self.alive || self.last.elapsed().as_millis() < 35 {
+        if !self.alive || self.paused || self.last.elapsed().as_millis() < 35 {
             return false;
         }
         self.last = Instant::now();
@@ -569,6 +599,7 @@ pub struct Simon {
     seq: Vec<u8>, // 0 up, 1 down, 2 left, 3 right
     score: u32,
     state: SState,
+    paused: bool,
     last: Instant,
     snd: Option<Snd>,
 }
@@ -579,6 +610,7 @@ impl Simon {
             seq: vec![below(trng, 4).unwrap_or(0) as u8],
             score: 0,
             state: SState::Showing(0, true),
+            paused: false,
             last: Instant::now(),
             snd: Some(Snd::Tick),
         }
@@ -586,7 +618,22 @@ impl Simon {
 }
 
 impl Game for Simon {
+    fn can_pause(&self) -> bool { true }
+    fn is_paused(&self) -> bool { self.paused }
+    fn set_paused(&mut self, p: bool) {
+        if self.state != SState::Over {
+            self.paused = p;
+            self.last = Instant::now();
+        }
+    }
     fn press(&mut self, b: Btn, trng: &Trng) -> bool {
+        if self.paused {
+            if b == Btn::Ok {
+                self.paused = false;
+                self.last = Instant::now();
+            }
+            return true;
+        }
         let dir = match b {
             Btn::Up => 0u8,
             Btn::Down => 1,
@@ -614,6 +661,9 @@ impl Game for Simon {
         false
     }
     fn update(&mut self, _t: &Trng) -> bool {
+        if self.paused {
+            return false;
+        }
         if let SState::Showing(i, lit) = self.state {
             let dur = if lit { 450 } else { 200 };
             if self.last.elapsed().as_millis() >= dur {

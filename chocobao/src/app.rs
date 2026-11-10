@@ -1,20 +1,19 @@
 // app.rs - the ChocoBao "OS": a small menu system on the 128x64 OLED, driven by six buttons.
 //
-//   HOME (default screen)   OK = type a password into the PC, hold OK = type 6 words, BACK = menu
-//   MENU                    UP / DOWN move, OK selects, BACK goes back
-//     Passwords  - type or show a password / 6 BIP-39 words
-//     Dice       - UP/DOWN pick the dice, OK rolls
-//     Games      - Mempool Dodger, Snake, Pong, Flappy Bao, Simon, Reaction (OK pauses / flaps)
-//     Tools      - Stopwatch, Magic 8-ball, Entropy meter (live TRNG test), Button test, Beep test,
-//                  SOS, Sound on/off, Bootloader (software PROG + RESET)
+//   HOME       the logo (chocolate pouring over a bao). BACK opens the menu. Nothing else is reachable here.
+//   MENU       UP/DOWN move, OK opens, BACK goes back. Each entry has an icon and a one-line description.
+//     Utilities  Password maker, Passphrase, PIN maker, Dice and coin, Random number, Stopwatch, Timer, Entropy meter
+//     Games      Mempool Dodger, Snake, Pong, Flappy Bao, Simon, Reaction, ChocoDoom, Magic 8-ball
+//     Lab        Button test, Buzzer test, SOS beeps, Sound on/off, Diagnostics
 //     About
+//   Every app shows a short how-to screen the first time it is opened (OK continues, BACK cancels).
 //
 // Design rules (so it behaves like a small RTOS and never wedges):
-//  * One fixed 10 ms tick. Nothing in the loop waits for hardware except that tick.
+//  * One fixed 16 ms tick. Nothing in the loop waits for hardware except that tick.
 //  * The display lives on its own thread (display.rs): a stuck I2C transfer cannot freeze the buttons or
-//    the game. If it stays stuck for 4 s the app restarts itself (watchdog).
+//    the game.
 //  * Each step runs inside catch_unwind: a bug on one screen drops you back to HOME instead of killing the app.
-//  * Press = instant event (controls.rs); holding LEFT/RIGHT auto-repeats in the game.
+//  * Press = instant event (controls.rs); holding LEFT/RIGHT auto-repeats where it helps.
 //  * A button release only counts if you pressed it on the same screen (no accidental carry-over).
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::Ordering;
@@ -27,51 +26,157 @@ use usb_bao1x::UsbHid;
 use crate::controls::{Btn, Input};
 use crate::display::Display;
 use crate::games::{Game, Snd, GAMES};
-use crate::oled::Canvas;
-use crate::rng;
 use crate::logo;
+use crate::oled::{Canvas, Frame};
+use crate::rng;
 use crate::sound::{self, Sound};
 
 const TICK_MS: u64 = 16;
 const WATCHDOG_MS: u32 = 20_000; // only a truly dead display bus should restart the app
+const WIPE_MS: u128 = 180;
+const SAVER_S: u64 = 45; // idle seconds before the screensaver starts
+const SAVER_BLANK_MS: u32 = 150_000; // after this long in the screensaver the screen goes fully dark
+
+// ------------------------------------------------------------------ icons (8x8, MSB = left pixel)
+const I_TOOLBOX: [u8; 8] = [0x3C, 0x24, 0xFF, 0x81, 0xBD, 0x81, 0xFF, 0x00];
+const I_GAMEPAD: [u8; 8] = [0x00, 0x7E, 0xFF, 0xDB, 0xFF, 0xFF, 0x7E, 0x00];
+const I_FLASK: [u8; 8] = [0x38, 0x10, 0x10, 0x28, 0x44, 0x7C, 0x7C, 0x00];
+const I_INFO: [u8; 8] = [0x18, 0x00, 0x38, 0x18, 0x18, 0x18, 0x3C, 0x00];
+const I_KEY: [u8; 8] = [0x38, 0x44, 0x44, 0x38, 0x10, 0x18, 0x10, 0x18];
+const I_WORDS: [u8; 8] = [0xEE, 0x00, 0xFE, 0x00, 0xDE, 0x00, 0xF0, 0x00];
+const I_PIN: [u8; 8] = [0x54, 0x00, 0x54, 0x00, 0x54, 0x00, 0x28, 0x00];
+const I_DICE: [u8; 8] = [0x7E, 0x81, 0xA5, 0x81, 0x81, 0xA5, 0x81, 0x7E];
+const I_RANDOM: [u8; 8] = [0x3C, 0x42, 0x04, 0x08, 0x10, 0x00, 0x10, 0x00];
+const I_STOPWATCH: [u8; 8] = [0x3C, 0x42, 0x89, 0x91, 0x99, 0x81, 0x42, 0x3C];
+const I_HOURGLASS: [u8; 8] = [0xFF, 0x7E, 0x3C, 0x18, 0x18, 0x24, 0x5A, 0xFF];
+const I_BARS: [u8; 8] = [0x01, 0x05, 0x45, 0x55, 0x55, 0xD7, 0xD7, 0xFF];
+const I_DODGER: [u8; 8] = [0x3C, 0x3C, 0x00, 0x00, 0x00, 0x10, 0x38, 0x7C];
+const I_SNAKE: [u8; 8] = [0x7C, 0x04, 0x04, 0x3C, 0x20, 0x20, 0x3E, 0x00];
+const I_PONG: [u8; 8] = [0x00, 0x80, 0x80, 0x81, 0x89, 0x01, 0x01, 0x00];
+const I_BIRD: [u8; 8] = [0x3C, 0x7E, 0xF6, 0xFF, 0xFE, 0x7C, 0x38, 0x00];
+const I_SIMON: [u8; 8] = [0xEE, 0xEE, 0xEE, 0x00, 0xEE, 0xEE, 0xEE, 0x00];
+const I_BOLT: [u8; 8] = [0x1C, 0x38, 0x70, 0xFE, 0x1C, 0x38, 0x70, 0xE0];
+const I_CROSS: [u8; 8] = [0x10, 0x10, 0x00, 0xE7, 0xE7, 0x00, 0x10, 0x10];
+const I_BALL: [u8; 8] = [0x3C, 0x7E, 0xE7, 0xDB, 0xE7, 0xDB, 0x66, 0x3C];
+const I_BUTTON: [u8; 8] = [0x3C, 0x42, 0x99, 0x99, 0x81, 0x42, 0x3C, 0x00];
+const I_BUN: [u8; 8] = [0x18, 0x3C, 0x7E, 0xFF, 0xFF, 0xFF, 0x7E, 0xFF];
+const I_SPEAKER: [u8; 8] = [0x08, 0x18, 0xF8, 0xF8, 0xF8, 0x18, 0x08, 0x00];
 
 #[derive(Clone, Copy, PartialEq)]
 enum MenuId {
     Main,
-    Passwords,
+    Utilities,
     Games,
-    Tools,
+    Lab,
 }
 
-fn items(m: MenuId) -> &'static [&'static str] {
+struct Item {
+    label: &'static str,
+    icon: &'static [u8; 8],
+    desc: &'static str,
+}
+
+const fn it(label: &'static str, icon: &'static [u8; 8], desc: &'static str) -> Item { Item { label, icon, desc } }
+
+static MAIN_ITEMS: [Item; 4] = [
+    it("Utilities", &I_TOOLBOX, "Passwords, dice, timers"),
+    it("Games", &I_GAMEPAD, "8 games incl. ChocoDoom"),
+    it("Lab", &I_FLASK, "Tests and experiments"),
+    it("About", &I_INFO, "Version and chip facts"),
+];
+static UTIL_ITEMS: [Item; 8] = [
+    it("Password maker", &I_KEY, "Rules for any website"),
+    it("Passphrase", &I_WORDS, "Random words, 11 bits each"),
+    it("PIN maker", &I_PIN, "Random digits"),
+    it("Dice and coin", &I_DICE, "Roll any dice or flip"),
+    it("Random number", &I_RANDOM, "Pick a number 1 to N"),
+    it("Stopwatch", &I_STOPWATCH, "Start, stop, reset"),
+    it("Timer", &I_HOURGLASS, "Countdown with alarm"),
+    it("Entropy meter", &I_BARS, "Live check of the TRNG"),
+];
+static GAME_ITEMS: [Item; 8] = [
+    it("Mempool Dodger", &I_DODGER, "Dodge blocks, grab coins"),
+    it("Snake", &I_SNAKE, "Eat, grow, don't crash"),
+    it("Pong", &I_PONG, "You vs the computer"),
+    it("Flappy Bao", &I_BIRD, "Fly through the gaps"),
+    it("Simon", &I_SIMON, "Repeat the arrow pattern"),
+    it("Reaction", &I_BOLT, "How fast are you?"),
+    it("ChocoDoom", &I_CROSS, "3D shooter, 5 demons"),
+    it("Magic 8-ball", &I_BALL, "Ask a yes/no question"),
+];
+static LAB_ITEMS: [Item; 5] = [
+    it("Button test", &I_BUTTON, "Check all 6 buttons"),
+    it("Buzzer test", &I_SPEAKER, "Plays a C major scale"),
+    it("SOS beeps", &I_SPEAKER, "Morse SOS on the buzzer"),
+    it("Sound on/off", &I_SPEAKER, "Mute or unmute"),
+    it("Diagnostics", &I_BARS, "Counters for debugging"),
+];
+
+fn items(m: MenuId) -> &'static [Item] {
     match m {
-        MenuId::Main => &["Passwords", "Dice", "Games", "Tools", "About"],
-        MenuId::Passwords => &["Site-rules password", "Type 6 words", "Show 6 words", "Show PIN (6)"],
-        MenuId::Games => &["Mempool Dodger", "Snake", "Pong", "Flappy Bao", "Simon", "Reaction", "ChocoDoom"],
-        MenuId::Tools => &[
-            "Stopwatch",
-            "Magic 8-ball",
-            "Entropy meter",
-            "Button test",
-            "Buzzer test",
-            "SOS beeps",
-            "Sound on/off",
-            "Diagnostics",
-        ],
+        MenuId::Main => &MAIN_ITEMS,
+        MenuId::Utilities => &UTIL_ITEMS,
+        MenuId::Games => &GAME_ITEMS,
+        MenuId::Lab => &LAB_ITEMS,
     }
 }
 
-fn title(m: MenuId) -> &'static str {
+fn menu_title(m: MenuId) -> &'static str {
     match m {
-        MenuId::Main => "ChocoBao menu",
-        MenuId::Passwords => "Passwords",
+        MenuId::Main => "ChocoBao",
+        MenuId::Utilities => "Utilities",
         MenuId::Games => "Games",
-        MenuId::Tools => "Tools",
+        MenuId::Lab => "Lab",
     }
 }
 
-const DICE: [(u32, u32, &str); 5] =
-    [(1, 6, "1d6"), (2, 6, "2d6"), (1, 20, "1d20"), (1, 100, "1d100"), (1, 2, "coin")];
+// ------------------------------------------------------------------ first-open help
+const H_PW: usize = 0;
+const H_WORDS: usize = 1;
+const H_PIN: usize = 2;
+const H_DICE: usize = 3;
+const H_RAND: usize = 4;
+const H_STOP: usize = 5;
+const H_TIMER: usize = 6;
+const H_ENT: usize = 7;
+const H_GAME: usize = 8; // + game index (0..=7, 7 = Magic 8-ball)
+const HELP_COUNT: usize = 16;
+
+fn help_text(id: usize) -> (&'static str, [&'static str; 4]) {
+    match id {
+        H_PW => ("Password maker", ["^v  pick the type", "<>  change the length", "OK new, hold OK = type", "(click the field first)"]),
+        H_WORDS => ("Passphrase", ["<>  number of words", "^v  other types", "OK new, hold OK = type", "(click the field first)"]),
+        H_PIN => ("PIN maker", ["<>  number of digits", "^v  other types", "OK new, hold OK = type", "(click the field first)"]),
+        H_DICE => ("Dice and coin", ["^v  pick the dice", "OK  roll", "", ""]),
+        H_RAND => ("Random number", ["^v  pick the range", "OK  draw a number", "", ""]),
+        H_STOP => ("Stopwatch", ["OK  start / stop", "UP  reset to zero", "", ""]),
+        H_TIMER => ("Timer", ["<>  +/- 10 seconds", "^v  +/- 1 minute", "OK  start / pause", "alarm when it ends"]),
+        H_ENT => ("Entropy meter", ["Counts the 1 bits of", "the hardware random", "generator. Healthy = 50%", "bars about equal"]),
+        x if x == H_GAME => ("Mempool Dodger", ["<> move, hold = glide", "dodge the blocks", "hollow squares = coins", "OK pauses"]),
+        x if x == H_GAME + 1 => ("Snake", ["^v<> steer", "eat the hollow squares", "walls and tail hurt", "OK pauses"]),
+        x if x == H_GAME + 2 => ("Pong", ["^v move your paddle", "return the ball", "OK pauses", ""]),
+        x if x == H_GAME + 3 => ("Flappy Bao", ["OK or UP flaps", "fly through the gaps", "don't touch anything", ""]),
+        x if x == H_GAME + 4 => ("Simon", ["watch the arrows", "then repeat them with", "^ v < >", "it grows each round"]),
+        x if x == H_GAME + 5 => ("Reaction", ["wait for GO!", "then press OK fast", "pressing early loses", ""]),
+        x if x == H_GAME + 6 => ("ChocoDoom", ["^v  walk fwd / back", "<>  turn (hold)", "OK  shoot", "kill all 5 demons"]),
+        _ => ("Magic 8-ball", ["think of a question", "press OK", "", ""]),
+    }
+}
+
+// ------------------------------------------------------------------ other constants
+const DICE: [(u32, u32, &str); 10] = [
+    (1, 4, "1d4"),
+    (1, 6, "1d6"),
+    (2, 6, "2d6"),
+    (1, 8, "1d8"),
+    (1, 10, "1d10"),
+    (1, 12, "1d12"),
+    (1, 20, "1d20"),
+    (1, 100, "1d100"),
+    (3, 6, "3d6"),
+    (1, 2, "coin"),
+];
+const RANGES: [u32; 7] = [6, 10, 20, 100, 1000, 10_000, 65_535];
 
 const BALL: [&str; 14] = [
     "It is certain",
@@ -96,21 +201,75 @@ struct Entropy {
     bins: [u32; 16],
 }
 
+/// Where a help screen leads after OK.
+enum Then {
+    Game(usize),
+    Open(Box<Screen>),
+}
+
 enum Screen {
     Boot(Instant),
     Home,
     Menu(MenuId, usize),
-    Dice(usize, String),
-    Show { title: String, lines: Vec<String>, back: MenuId },
-    Countdown { words: bool, until: Instant },
-    PwGen { prof: usize, len: usize, pw: String },
-    Game { idx: usize, g: Box<dyn Game> },
+    Help { id: usize, then: Then },
+    PwGen { prof: usize, len: usize, pw: String, from: usize },
+    Dice { p: usize, cur: String },
+    Rand { r: usize, result: Option<u32> },
     Stopwatch { running: bool, started: Instant, acc: Duration },
-    Ball(Option<usize>),
+    Timer { set_s: u32, running: bool, end: Instant, left_ms: u32, done: bool },
     Entropy(Entropy),
+    Game { idx: usize, g: Box<dyn Game> },
+    Ball(Option<usize>),
     ButtonTest,
     Diag,
     About,
+}
+
+fn screen_code(s: &Screen) -> u32 {
+    match s {
+        Screen::Boot(_) => 0,
+        Screen::Home => 1,
+        Screen::Menu(..) => 2,
+        Screen::Help { .. } => 3,
+        Screen::PwGen { .. } => 4,
+        Screen::Dice { .. } => 5,
+        Screen::Rand { .. } => 6,
+        Screen::Stopwatch { .. } => 7,
+        Screen::Timer { .. } => 8,
+        Screen::Entropy(_) => 9,
+        Screen::Ball(_) => 10,
+        Screen::ButtonTest => 20,
+        Screen::Diag => 21,
+        Screen::About => 22,
+        Screen::Game { idx, .. } => 30 + *idx as u32,
+    }
+}
+
+/// Where BACK leads from a screen.
+fn parent(s: &Screen) -> Screen {
+    match s {
+        Screen::Boot(_) => Screen::Home,
+        Screen::Home => Screen::Menu(MenuId::Main, 0),
+        Screen::Menu(MenuId::Main, _) => Screen::Home,
+        Screen::Menu(MenuId::Utilities, _) => Screen::Menu(MenuId::Main, 0),
+        Screen::Menu(MenuId::Games, _) => Screen::Menu(MenuId::Main, 1),
+        Screen::Menu(MenuId::Lab, _) => Screen::Menu(MenuId::Main, 2),
+        Screen::Help { then, .. } => match then {
+            Then::Game(i) => Screen::Menu(MenuId::Games, *i),
+            Then::Open(b) => parent(b),
+        },
+        Screen::PwGen { from, .. } => Screen::Menu(MenuId::Utilities, *from),
+        Screen::Dice { .. } => Screen::Menu(MenuId::Utilities, 3),
+        Screen::Rand { .. } => Screen::Menu(MenuId::Utilities, 4),
+        Screen::Stopwatch { .. } => Screen::Menu(MenuId::Utilities, 5),
+        Screen::Timer { .. } => Screen::Menu(MenuId::Utilities, 6),
+        Screen::Entropy(_) => Screen::Menu(MenuId::Utilities, 7),
+        Screen::Game { idx, .. } => Screen::Menu(MenuId::Games, *idx),
+        Screen::Ball(_) => Screen::Menu(MenuId::Games, 7),
+        Screen::ButtonTest => Screen::Menu(MenuId::Lab, 0),
+        Screen::Diag => Screen::Menu(MenuId::Lab, 4),
+        Screen::About => Screen::Menu(MenuId::Main, 3),
+    }
 }
 
 fn bidx(b: Btn) -> usize {
@@ -125,22 +284,44 @@ fn bidx(b: Btn) -> usize {
 }
 const BTN_NAMES: [&str; 6] = ["OK", "UP", "DOWN", "LEFT", "RIGHT", "BACK"];
 
+fn beeps_for(s: Snd) -> &'static [sound::Note] {
+    match s {
+        Snd::Click => sound::CLICK,
+        Snd::Coin => sound::COIN,
+        Snd::Crash => sound::CRASH,
+        Snd::Tick => sound::TICK,
+    }
+}
+
+fn fmt_time(d: Duration) -> String {
+    let ms = d.as_millis() as u64;
+    format!("{:02}:{:02}.{:02}", ms / 60000, (ms / 1000) % 60, (ms % 1000) / 10)
+}
+
+/// Shorten `s` to at most `n` characters.
+fn cut(s: &str, n: usize) -> &str { if s.len() <= n { s } else { &s[..n] } }
+
 struct App {
     display: Option<Display>,
     canvas: Canvas,
+    prev: Frame,
+    wipe_from: Option<Instant>,
     trng: Trng,
     usb: UsbHid,
     snd: Sound,
     screen: Screen,
     gen: u32,    // bumped on every screen change
     ok_gen: u32, // the screen generation OK was pressed on
-    status: String,
+    toast: Option<(String, Instant)>,
+    help_seen: [bool; HELP_COUNT],
     started: Instant,
     down: [bool; 6],
     best: [u32; 8],
     sound_done: bool,
     anim_at: Instant,
     rep_at: Instant,
+    last_input: Instant,
+    saver: Option<Instant>,
     panics: u32,
     dirty: bool,
     last_secs: u64,
@@ -158,7 +339,7 @@ fn run(rx: Receiver<Input>) {
     let trng = Trng::new(&xns).unwrap();
     let usb = UsbHid::new();
     crate::bootmode::usb_reconnect();
-    // Safe-mode switches, read from buttons held while the device boots (see HANDOFF.md):
+    // Safe-mode switches, read from buttons held while the device boots (see BUILD_GUIDE.md):
     //   hold BACK = no display and no sound (nothing touches I2C or the BIO), hold DOWN = no sound only.
     let mut held = [false; 6];
     while let Ok(i) = rx.try_recv() {
@@ -176,19 +357,24 @@ fn run(rx: Receiver<Input>) {
     let mut app = App {
         display,
         canvas: Canvas::new(),
+        prev: [0; crate::oled::W * crate::oled::H / 8],
+        wipe_from: None,
         trng,
         usb,
         snd,
         screen: Screen::Boot(Instant::now()),
         gen: 0,
         ok_gen: u32::MAX,
-        status: String::new(),
+        toast: None,
+        help_seen: [false; HELP_COUNT],
         started: Instant::now(),
         down: held,
         best: [0; 8],
         sound_done: false,
         anim_at: Instant::now(),
         rep_at: Instant::now(),
+        last_input: Instant::now(),
+        saver: None,
         panics: 0,
         dirty: true,
         last_secs: 0,
@@ -248,42 +434,12 @@ fn run(rx: Receiver<Input>) {
     }
 }
 
-fn beeps_for(s: Snd) -> &'static [sound::Note] {
-    match s {
-        Snd::Click => sound::CLICK,
-        Snd::Coin => sound::COIN,
-        Snd::Crash => sound::CRASH,
-        Snd::Tick => sound::TICK,
-    }
-}
-
-fn screen_code(s: &Screen) -> u32 {
-    match s {
-        Screen::Boot(_) => 0,
-        Screen::Home => 1,
-        Screen::Menu(..) => 2,
-        Screen::Dice(..) => 3,
-        Screen::Show { .. } => 4,
-        Screen::Countdown { .. } => 5,
-        Screen::PwGen { .. } => 6,
-        Screen::Stopwatch { .. } => 7,
-        Screen::Ball(_) => 8,
-        Screen::Entropy(_) => 9,
-        Screen::ButtonTest => 20,
-        Screen::Diag => 21,
-        Screen::About => 22,
-        Screen::Game { idx, .. } => 10 + *idx as u32,
-    }
-}
-
-fn fmt_time(d: Duration) -> String {
-    let ms = d.as_millis() as u64;
-    format!("{:02}:{:02}.{:02}", ms / 60000, (ms / 1000) % 60, (ms % 1000) / 10)
-}
-
 impl App {
+    /// Switch screens (with a short wipe from the old picture to the new one).
     fn goto(&mut self, s: Screen) {
-        crate::diag::SCREEN.store(screen_code(&s), std::sync::atomic::Ordering::Relaxed);
+        crate::diag::SCREEN.store(screen_code(&s), Ordering::Relaxed);
+        self.prev.copy_from_slice(&self.canvas.fb);
+        self.wipe_from = Some(Instant::now());
         self.screen = s;
         self.gen = self.gen.wrapping_add(1);
         self.dirty = true;
@@ -294,8 +450,33 @@ impl App {
         log::error!("recovered from a panic, back to HOME");
         self.panics += 1;
         crate::diag::bump(&crate::diag::PANICS);
-        self.status = "recovered".into();
+        self.toast = Some(("recovered".into(), Instant::now()));
         self.goto(Screen::Home);
+    }
+
+    fn toast(&mut self, msg: &str) {
+        self.toast = Some((msg.to_string(), Instant::now()));
+        self.dirty = true;
+    }
+
+    /// Open an app; the first time, show its how-to screen first.
+    fn open(&mut self, help: usize, s: Screen) {
+        if !self.help_seen[help] {
+            self.help_seen[help] = true;
+            self.goto(Screen::Help { id: help, then: Then::Open(Box::new(s)) });
+        } else {
+            self.goto(s);
+        }
+    }
+
+    fn open_game(&mut self, idx: usize) {
+        let help = H_GAME + idx;
+        if !self.help_seen[help] {
+            self.help_seen[help] = true;
+            self.goto(Screen::Help { id: help, then: Then::Game(idx) });
+        } else {
+            self.start_game(idx);
+        }
     }
 
     fn start_game(&mut self, idx: usize) {
@@ -312,8 +493,19 @@ impl App {
         self.goto(Screen::Game { idx, g });
     }
 
+    fn new_pw(&self, prof: usize, len: usize) -> String {
+        rng::generate(&self.trng, &rng::PROFILES[prof], len).unwrap_or_default()
+    }
+
     // ------------------------------------------------------------------ input
     fn on_input(&mut self, inp: Input) {
+        self.last_input = Instant::now();
+        if self.saver.is_some() {
+            // any button wakes the screen; the press itself is swallowed and everything resumes where it was
+            self.saver = None;
+            self.dirty = true;
+            return;
+        }
         match inp {
             Input::Press(b) => {
                 self.down[bidx(b)] = true;
@@ -344,13 +536,24 @@ impl App {
 
     fn on_press(&mut self, b: Btn) {
         if b == Btn::Back {
-            self.go_back();
+            // in a game: first BACK pauses, the second BACK quits
+            if let Screen::Game { g, .. } = &mut self.screen {
+                if g.can_pause() && !g.over() && !g.is_paused() {
+                    g.set_paused(true);
+                    self.dirty = true;
+                    return;
+                }
+            }
+            self.snd.silence();
+            let to = parent(&self.screen);
+            self.goto(to);
             return;
         }
         let mut redraw = false;
         let mut click = false;
         let mut restart = None;
         let mut rep = false;
+        let mut help_ok = false;
         match &mut self.screen {
             Screen::Menu(m, sel) => {
                 let n = items(*m).len();
@@ -368,21 +571,14 @@ impl App {
                     _ => {}
                 }
             }
-            Screen::Dice(p, _) => match b {
-                Btn::Up => {
-                    *p = (*p + DICE.len() - 1) % DICE.len();
-                    redraw = true;
-                    click = true;
+            Screen::Help { .. } => {
+                if b == Btn::Ok {
+                    help_ok = true;
                 }
-                Btn::Down => {
-                    *p = (*p + 1) % DICE.len();
-                    redraw = true;
-                    click = true;
-                }
-                _ => {}
-            },
-            Screen::PwGen { prof, len, pw } => {
+            }
+            Screen::PwGen { prof, len, pw, .. } => {
                 let n = rng::PROFILES.len();
+                let mut changed = true;
                 match b {
                     Btn::Up => {
                         *prof = (*prof + n - 1) % n;
@@ -392,16 +588,47 @@ impl App {
                         *prof = (*prof + 1) % n;
                         *len = rng::PROFILES[*prof].default_len;
                     }
-                    Btn::Left => *len = (*len).saturating_sub(1).max(rng::LEN_MIN),
-                    Btn::Right => *len = (*len + 1).min(rng::LEN_MAX),
-                    _ => {}
+                    Btn::Left => *len = (*len).saturating_sub(1).max(rng::PROFILES[*prof].len_min),
+                    Btn::Right => *len = (*len + 1).min(rng::PROFILES[*prof].len_max),
+                    _ => changed = false,
                 }
-                if matches!(b, Btn::Up | Btn::Down | Btn::Left | Btn::Right) {
+                if changed {
                     *pw = rng::generate(&self.trng, &rng::PROFILES[*prof], *len).unwrap_or_default();
                     redraw = true;
-                    rep = true;
+                    click = matches!(b, Btn::Up | Btn::Down);
+                    rep = matches!(b, Btn::Left | Btn::Right);
                 }
             }
+            Screen::Dice { p, cur } => match b {
+                Btn::Up => {
+                    *p = (*p + DICE.len() - 1) % DICE.len();
+                    cur.clear();
+                    redraw = true;
+                    click = true;
+                }
+                Btn::Down => {
+                    *p = (*p + 1) % DICE.len();
+                    cur.clear();
+                    redraw = true;
+                    click = true;
+                }
+                _ => {}
+            },
+            Screen::Rand { r, result } => match b {
+                Btn::Up => {
+                    *r = (*r + RANGES.len() - 1) % RANGES.len();
+                    *result = None;
+                    redraw = true;
+                    click = true;
+                }
+                Btn::Down => {
+                    *r = (*r + 1) % RANGES.len();
+                    *result = None;
+                    redraw = true;
+                    click = true;
+                }
+                _ => {}
+            },
             Screen::Game { idx, g } => {
                 if b == Btn::Ok && g.over() {
                     restart = Some(*idx); // OK after game over = play again
@@ -428,6 +655,42 @@ impl App {
                 }
                 _ => {}
             },
+            Screen::Timer { set_s, running, end, left_ms, done } => match b {
+                Btn::Ok => {
+                    if *done {
+                        *done = false;
+                        *left_ms = 0;
+                    } else if *running {
+                        *left_ms = end.saturating_duration_since(Instant::now()).as_millis() as u32;
+                        *running = false;
+                    } else {
+                        let ms = if *left_ms > 0 { *left_ms } else { *set_s * 1000 };
+                        if ms > 0 {
+                            *end = Instant::now() + Duration::from_millis(ms as u64);
+                            *running = true;
+                        }
+                    }
+                    redraw = true;
+                    click = true;
+                }
+                _ if !*running => {
+                    let d: i32 = match b {
+                        Btn::Right => 10,
+                        Btn::Left => -10,
+                        Btn::Up => 60,
+                        Btn::Down => -60,
+                        _ => 0,
+                    };
+                    if d != 0 {
+                        *set_s = (*set_s as i32 + d).clamp(0, 99 * 60 + 59) as u32;
+                        *left_ms = 0;
+                        *done = false;
+                        redraw = true;
+                        click = true;
+                    }
+                }
+                _ => {}
+            },
             _ => {}
         }
         if rep {
@@ -436,36 +699,49 @@ impl App {
         if click {
             self.snd.play(sound::CLICK);
         }
-        if let Some(idx) = restart {
+        if help_ok {
+            self.leave_help();
+        } else if let Some(idx) = restart {
             self.start_game(idx);
         } else if redraw {
             self.dirty = true;
         }
     }
 
+    fn leave_help(&mut self) {
+        let old = std::mem::replace(&mut self.screen, Screen::Home);
+        if let Screen::Help { then, .. } = old {
+            self.snd.play(sound::CLICK);
+            match then {
+                Then::Game(i) => self.start_game(i),
+                Then::Open(b) => self.goto(*b),
+            }
+        }
+    }
+
     fn on_ok(&mut self, held_ms: u32) {
-        let _ = held_ms;
         enum Act {
             None,
             Select(MenuId, usize),
-            Roll(usize),
-            Shake,
             PwOk(bool),
+            Roll,
+            Draw,
+            Shake,
         }
         let act = match &self.screen {
             Screen::Menu(m, sel) => Act::Select(*m, *sel),
-            Screen::Dice(p, _) => Act::Roll(*p),
-            Screen::Ball(_) => Act::Shake,
             Screen::PwGen { .. } => Act::PwOk(held_ms >= 800),
+            Screen::Dice { .. } => Act::Roll,
+            Screen::Rand { .. } => Act::Draw,
+            Screen::Ball(_) => Act::Shake,
             _ => Act::None,
         };
         match act {
             Act::None => {}
             Act::Select(m, sel) => self.select(m, sel),
-            Act::Roll(p) => self.roll(p),
             Act::PwOk(type_it) => {
                 let mut to_type: Option<String> = None;
-                if let Screen::PwGen { prof, len, pw } = &mut self.screen {
+                if let Screen::PwGen { prof, len, pw, .. } = &mut self.screen {
                     if type_it {
                         to_type = Some(pw.clone());
                     } else {
@@ -475,10 +751,18 @@ impl App {
                 if let Some(text) = to_type {
                     self.snd.play(sound::COIN);
                     self.type_text(&text);
-                    self.status = "typed site pw".into();
+                    self.toast("typed into the PC");
                 } else {
                     self.snd.play(sound::CLICK);
                 }
+                self.dirty = true;
+            }
+            Act::Roll => self.roll(),
+            Act::Draw => {
+                if let Screen::Rand { r, result } = &mut self.screen {
+                    *result = Some(rng::below(&self.trng, RANGES[*r]).unwrap_or(0) + 1);
+                }
+                self.snd.play(sound::CLICK);
                 self.dirty = true;
             }
             Act::Shake => {
@@ -490,141 +774,130 @@ impl App {
         }
     }
 
-    fn go_back(&mut self) {
-        let to = match &self.screen {
-            Screen::Boot(_) => Screen::Home,
-            Screen::Home => Screen::Menu(MenuId::Main, 0),
-            Screen::Menu(MenuId::Main, _) => Screen::Home,
-            Screen::Menu(MenuId::Passwords, _) => Screen::Menu(MenuId::Main, 0),
-            Screen::Menu(MenuId::Games, _) => Screen::Menu(MenuId::Main, 2),
-            Screen::Menu(MenuId::Tools, _) => Screen::Menu(MenuId::Main, 3),
-            Screen::Dice(..) => Screen::Menu(MenuId::Main, 1),
-            Screen::Show { back, .. } => Screen::Menu(*back, 0),
-            Screen::Countdown { .. } | Screen::PwGen { .. } => Screen::Menu(MenuId::Passwords, 0),
-            Screen::Game { idx, .. } => Screen::Menu(MenuId::Games, *idx),
-            Screen::Stopwatch { .. } => Screen::Menu(MenuId::Tools, 0),
-            Screen::Ball(_) => Screen::Menu(MenuId::Tools, 1),
-            Screen::Entropy(_) => Screen::Menu(MenuId::Tools, 2),
-            Screen::ButtonTest => Screen::Menu(MenuId::Tools, 3),
-            Screen::Diag => Screen::Menu(MenuId::Tools, 7),
-            Screen::About => Screen::Menu(MenuId::Main, 4),
-        };
-        self.snd.silence();
-        self.goto(to);
-    }
-
     // ------------------------------------------------------------------ actions
     fn type_text(&mut self, text: &str) {
         // errors (no USB host connected) are ignored on purpose
         self.usb.send_str(&crate::typing::as_us_keyboard(text)).ok();
     }
 
-    /// HOME + OK: type a secret straight away (short = password, long = 6 words).
-    fn quick_type(&mut self, words: bool) {
-        let secret = if words { rng::passphrase(&self.trng) } else { rng::password(&self.trng) };
-        if let Some(text) = secret {
-            self.type_text(&text);
-            self.status = if words { "typed 6 words 66b".into() } else { "typed 20 chars 119b".into() };
-            self.snd.play(sound::COIN);
-        }
-        self.dirty = true;
-    }
-
     fn select(&mut self, m: MenuId, sel: usize) {
         self.snd.play(sound::CLICK);
         match (m, sel) {
-            (MenuId::Main, 0) => self.goto(Screen::Menu(MenuId::Passwords, 0)),
-            (MenuId::Main, 1) => self.goto(Screen::Dice(0, String::new())),
-            (MenuId::Main, 2) => self.goto(Screen::Menu(MenuId::Games, 0)),
-            (MenuId::Main, 3) => self.goto(Screen::Menu(MenuId::Tools, 0)),
-            (MenuId::Main, 4) => self.goto(Screen::About),
-            (MenuId::Passwords, 0) => {
-                let (prof, len) = (0, rng::PROFILES[0].default_len);
-                let pw = rng::generate(&self.trng, &rng::PROFILES[prof], len).unwrap_or_default();
-                self.goto(Screen::PwGen { prof, len, pw });
+            (MenuId::Main, 0) => self.goto(Screen::Menu(MenuId::Utilities, 0)),
+            (MenuId::Main, 1) => self.goto(Screen::Menu(MenuId::Games, 0)),
+            (MenuId::Main, 2) => self.goto(Screen::Menu(MenuId::Lab, 0)),
+            (MenuId::Main, 3) => self.goto(Screen::About),
+            (MenuId::Utilities, 0) => {
+                let prof = 0;
+                let len = rng::PROFILES[prof].default_len;
+                let pw = self.new_pw(prof, len);
+                self.open(H_PW, Screen::PwGen { prof, len, pw, from: 0 });
             }
-            (MenuId::Passwords, 1) => self.start_countdown(true),
-            (MenuId::Passwords, 2) => {
-                let phrase = rng::passphrase(&self.trng).unwrap_or_default();
-                let parts: Vec<&str> = phrase.split('-').collect();
-                let mut lines: Vec<String> = parts.chunks(2).map(|c| c.join("-")).collect();
-                lines.push("6 words, 66 bits".into());
-                self.goto(Screen::Show { title: "6 words".into(), lines, back: MenuId::Passwords });
+            (MenuId::Utilities, 1) => {
+                let prof = rng::PROFILE_WORDS;
+                let len = rng::PROFILES[prof].default_len;
+                let pw = self.new_pw(prof, len);
+                self.open(H_WORDS, Screen::PwGen { prof, len, pw, from: 1 });
             }
-            (MenuId::Passwords, 3) => {
-                let mut pin = String::new();
-                for _ in 0..6 {
-                    pin.push((b'0' + rng::below(&self.trng, 10).unwrap_or(0) as u8) as char);
-                }
-                self.goto(Screen::Show {
-                    title: "PIN".into(),
-                    lines: vec![pin, "".into(), "6 digits, 20 bits".into()],
-                    back: MenuId::Passwords,
-                });
+            (MenuId::Utilities, 2) => {
+                let prof = rng::PROFILE_PIN;
+                let len = rng::PROFILES[prof].default_len;
+                let pw = self.new_pw(prof, len);
+                self.open(H_PIN, Screen::PwGen { prof, len, pw, from: 2 });
             }
-            (MenuId::Games, i) if i < GAMES.len() => self.start_game(i),
-            (MenuId::Tools, 0) => {
-                self.goto(Screen::Stopwatch { running: false, started: Instant::now(), acc: Duration::ZERO })
+            (MenuId::Utilities, 3) => self.open(H_DICE, Screen::Dice { p: 1, cur: String::new() }),
+            (MenuId::Utilities, 4) => self.open(H_RAND, Screen::Rand { r: 3, result: None }),
+            (MenuId::Utilities, 5) => {
+                self.open(H_STOP, Screen::Stopwatch { running: false, started: Instant::now(), acc: Duration::ZERO })
             }
-            (MenuId::Tools, 1) => self.goto(Screen::Ball(None)),
-            (MenuId::Tools, 2) => self.goto(Screen::Entropy(Entropy { total: 0, ones: 0, bins: [0; 16] })),
-            (MenuId::Tools, 3) => self.goto(Screen::ButtonTest),
-            (MenuId::Tools, 4) => {
+            (MenuId::Utilities, 6) => self.open(
+                H_TIMER,
+                Screen::Timer { set_s: 60, running: false, end: Instant::now(), left_ms: 0, done: false },
+            ),
+            (MenuId::Utilities, 7) => {
+                self.open(H_ENT, Screen::Entropy(Entropy { total: 0, ones: 0, bins: [0; 16] }))
+            }
+            (MenuId::Games, i) if i < GAMES.len() => self.open_game(i),
+            (MenuId::Games, 7) => self.open(H_GAME + 7, Screen::Ball(None)),
+            (MenuId::Lab, 0) => self.goto(Screen::ButtonTest),
+            (MenuId::Lab, 1) => {
                 self.snd.play(sound::SCALE);
-                let st = self.snd.status_text();
-                self.goto(Screen::Show {
-                    title: "Buzzer test".into(),
-                    lines: vec!["scale from C#4".into(), "buzzer + on pin 32".into(), "(PB3), - on GND".into(), st],
-                    back: MenuId::Tools,
-                });
+                self.toast("playing a scale");
             }
-            (MenuId::Tools, 5) => self.snd.play(sound::SOS),
-            (MenuId::Tools, 6) => {
+            (MenuId::Lab, 2) => {
+                self.snd.play(sound::SOS);
+                self.toast("... --- ...");
+            }
+            (MenuId::Lab, 3) => {
                 let on = self.snd.toggle();
-                self.status = if on { "sound on".into() } else { "sound off".into() };
-                self.goto(Screen::Show {
-                    title: "Sound".into(),
-                    lines: vec![if on { "sound is ON".into() } else { "sound is OFF".into() }, "BACK = menu".into()],
-                    back: MenuId::Tools,
-                });
+                self.toast(if on { "sound ON" } else { "sound OFF" });
             }
-            (MenuId::Tools, 7) => self.goto(Screen::Diag),
+            (MenuId::Lab, 4) => self.goto(Screen::Diag),
             _ => {}
         }
     }
 
-    /// Menu -> "Type ...": give the user 3 seconds to click the target field, then type. Never blocks;
-    /// BACK cancels.
-    fn start_countdown(&mut self, words: bool) {
-        self.goto(Screen::Countdown { words, until: Instant::now() + Duration::from_secs(3) });
-    }
-
-    fn roll(&mut self, p: usize) {
-        let (n, sides, label) = DICE[p];
-        let mut total = 0;
-        let mut parts: Vec<String> = Vec::new();
-        for _ in 0..n {
-            let r = rng::below(&self.trng, sides).unwrap_or(0) + 1;
-            total += r;
-            parts.push(r.to_string());
+    fn roll(&mut self) {
+        let mut text = String::new();
+        if let Screen::Dice { p, .. } = &self.screen {
+            let (n, sides, label) = DICE[*p];
+            let mut total = 0;
+            let mut parts: Vec<String> = Vec::new();
+            for _ in 0..n {
+                let r = rng::below(&self.trng, sides).unwrap_or(0) + 1;
+                total += r;
+                parts.push(r.to_string());
+            }
+            text = if label == "coin" {
+                if total == 1 { "heads".to_string() } else { "tails".to_string() }
+            } else if n > 1 {
+                format!("{}={}", parts.join("+"), total)
+            } else {
+                total.to_string()
+            };
         }
-        let text = if label == "coin" {
-            if total == 1 { "heads".to_string() } else { "tails".to_string() }
-        } else if n > 1 {
-            format!("{}+{}={}", parts[0], parts[1], total)
-        } else {
-            total.to_string()
-        };
+        if let Screen::Dice { cur, .. } = &mut self.screen {
+            *cur = text;
+        }
         self.snd.play(sound::CLICK);
-        self.screen = Screen::Dice(p, text); // same screen, keep `gen`
         self.dirty = true;
     }
 
     // ------------------------------------------------------------------ timers
     fn tick(&mut self) {
         let now = Instant::now();
-        let mut finish_countdown = None;
         let mut to_home = false;
+        let mut alarm = false;
+        // screensaver: after SAVER_S seconds without a button the screen goes to a moving bun, and games pause
+        let idle_ok = !matches!(self.screen, Screen::Boot(_))
+            && !matches!(self.screen, Screen::Timer { running: true, .. })
+            && !matches!(self.screen, Screen::Timer { done: true, .. });
+        if self.saver.is_none() && idle_ok && now.duration_since(self.last_input) > Duration::from_secs(SAVER_S) {
+            self.saver = Some(now);
+            if let Screen::Game { g, .. } = &mut self.screen {
+                if g.can_pause() && !g.over() {
+                    g.set_paused(true);
+                }
+            }
+            self.snd.silence();
+            self.dirty = true;
+        }
+        if self.saver.is_some() {
+            if now.duration_since(self.anim_at) >= Duration::from_millis(150) {
+                self.anim_at = now;
+                self.dirty = true;
+            }
+            return;
+        }
+        if let Some((_, t0)) = &self.toast {
+            if now.duration_since(*t0) > Duration::from_millis(1600) {
+                self.toast = None;
+            }
+            self.dirty = true;
+        }
+        if self.wipe_from.is_some() {
+            self.dirty = true;
+        }
         match &mut self.screen {
             Screen::Boot(t0) => {
                 let ms = t0.elapsed().as_millis() as u32;
@@ -639,7 +912,7 @@ impl App {
                 }
             }
             Screen::Home => {
-                if now.duration_since(self.anim_at) >= Duration::from_millis(250) {
+                if now.duration_since(self.anim_at) >= Duration::from_millis(120) {
                     self.anim_at = now;
                     self.dirty = true;
                 }
@@ -663,12 +936,13 @@ impl App {
                     *b = sc;
                 }
             }
-            Screen::PwGen { prof, len, pw } => {
+            Screen::PwGen { prof, len, pw, .. } => {
                 // holding LEFT / RIGHT keeps changing the length
                 let (l, r) = (self.down[bidx(Btn::Left)], self.down[bidx(Btn::Right)]);
                 if l != r && now >= self.rep_at {
-                    *len = if l { (*len).saturating_sub(1).max(rng::LEN_MIN) } else { (*len + 1).min(rng::LEN_MAX) };
-                    *pw = rng::generate(&self.trng, &rng::PROFILES[*prof], *len).unwrap_or_default();
+                    let p = &rng::PROFILES[*prof];
+                    *len = if l { (*len).saturating_sub(1).max(p.len_min) } else { (*len + 1).min(p.len_max) };
+                    *pw = rng::generate(&self.trng, p, *len).unwrap_or_default();
                     self.rep_at = now + Duration::from_millis(90);
                     self.dirty = true;
                 }
@@ -676,6 +950,21 @@ impl App {
             Screen::Stopwatch { running, .. } => {
                 if *running {
                     self.dirty = true;
+                }
+            }
+            Screen::Timer { running, end, left_ms, done, .. } => {
+                if *running {
+                    if now >= *end {
+                        *running = false;
+                        *done = true;
+                        *left_ms = 0;
+                        alarm = true;
+                    }
+                    self.dirty = true;
+                }
+                if *done && now.duration_since(self.anim_at) >= Duration::from_millis(350) {
+                    self.anim_at = now;
+                    alarm = true;
                 }
             }
             Screen::Entropy(e) => {
@@ -693,14 +982,7 @@ impl App {
                     self.dirty = true;
                 }
             }
-            Screen::Countdown { words, until } => {
-                if now >= *until {
-                    finish_countdown = Some(*words);
-                } else {
-                    self.dirty = true; // redraw the seconds
-                }
-            }
-            Screen::About | Screen::Diag => {
+            Screen::Diag | Screen::About => {
                 let secs = self.started.elapsed().as_secs();
                 if secs != self.last_secs {
                     self.last_secs = secs;
@@ -709,23 +991,12 @@ impl App {
             }
             _ => {}
         }
+        if alarm {
+            self.snd.play(sound::HELLO);
+            self.dirty = true;
+        }
         if to_home {
             self.goto(Screen::Home);
-        }
-        if let Some(words) = finish_countdown {
-            let secret = if words { rng::passphrase(&self.trng) } else { rng::password(&self.trng) };
-            let msg = match secret {
-                Some(text) => {
-                    self.type_text(&text);
-                    if words { "typed 6 words" } else { "typed 20 chars" }
-                }
-                None => "random number error",
-            };
-            self.goto(Screen::Show {
-                title: "Done".into(),
-                lines: vec![msg.to_string(), "BACK = menu".into()],
-                back: MenuId::Passwords,
-            });
         }
     }
 
@@ -734,64 +1005,143 @@ impl App {
         let Some(disp) = self.display.clone() else { return };
         let oled = &mut self.canvas;
         oled.clear();
+        if let Some(t0) = self.saver {
+            // screensaver: a small bun drifts around so no pixel stays lit; much later the screen is fully dark
+            let el = t0.elapsed().as_millis() as u32;
+            if el < SAVER_BLANK_MS {
+                let tri = |t: u32, span: u32| -> usize {
+                    let p = t % (2 * span);
+                    (if p < span { p } else { 2 * span - p }) as usize
+                };
+                oled.icon(tri(el / 110, 118), tri(el / 170, 54), &I_BUN);
+            }
+            disp.submit(&self.canvas);
+            return;
+        }
         match &self.screen {
             Screen::Boot(t0) => logo::boot_frame(oled, t0.elapsed().as_millis() as u32),
             Screen::Home => logo::home_frame(oled, self.started.elapsed().as_millis() as u32),
             Screen::Menu(m, sel) => {
-                oled.text(0, 0, title(*m));
                 let list = items(*m);
-                let start = if *sel >= 4 { *sel - 3 } else { 0 };
-                for k in 0..4 {
+                oled.text(0, 0, menu_title(*m));
+                let idx_txt = format!("{}/{}", sel + 1, list.len());
+                oled.text(128 - 6 * idx_txt.len(), 0, &idx_txt);
+                let start = if *sel >= 3 { *sel - 2 } else { 0 };
+                for k in 0..3 {
                     let idx = start + k;
                     if idx < list.len() {
                         let y = 13 + 13 * k;
-                        oled.text(6, y, list[idx]);
+                        oled.icon(2, y + 2, list[idx].icon);
+                        oled.text(14, y, list[idx].label);
                         if idx == *sel {
                             oled.invert_rect(0, y - 1, 128, 13);
                         }
                     }
                 }
-                // scroll hint on the right edge
-                if list.len() > 4 {
-                    let h = 48 * 4 / list.len();
-                    let y = 13 + (48 - h) * *sel / (list.len() - 1);
+                if list.len() > 3 {
+                    let h = 39 * 3 / list.len();
+                    let y = 13 + (39 - h) * *sel / (list.len() - 1);
                     oled.fill_rect(126, y, 2, h, true);
                 }
+                let footer = match &self.toast {
+                    Some((t, _)) => t.as_str(),
+                    None => list[*sel].desc,
+                };
+                oled.text(0, 52, cut(footer, 21));
             }
-            Screen::Dice(p, text) => {
-                oled.text(0, 0, &format!("Dice: {}  (UP/DOWN)", DICE[*p].2));
-                oled.text(0, 13, "OK rolls, BACK exits");
-                if !text.is_empty() {
-                    // scale 3 is 18 px per character: 7 characters fit, otherwise use scale 2
-                    oled.text_big(0, 28, text, if text.len() <= 7 { 3 } else { 2 });
+            Screen::Help { id, .. } => {
+                let (title, lines) = help_text(*id);
+                oled.rect(0, 0, 128, 64);
+                oled.text(4, 3, title);
+                for (i, l) in lines.iter().enumerate() {
+                    oled.text(4, 16 + 11 * i, l);
                 }
+                oled.invert_rect(1, 1, 126, 14);
+                oled.text(4, 52, "OK = start  BACK = no");
             }
-            Screen::Show { title, lines, .. } => {
-                oled.text(0, 0, title);
-                for (i, l) in lines.iter().take(4).enumerate() {
-                    oled.text(0, 13 + 13 * i, l);
-                }
-            }
-            Screen::Countdown { words, until } => {
-                let left = until.saturating_duration_since(Instant::now()).as_millis() as u64 / 1000 + 1;
-                oled.text(0, 0, if *words { "Typing 6 words in" } else { "Typing password in" });
-                oled.text_big(52, 16, &left.to_string(), 3);
-                oled.text(0, 52, "click target field");
-            }
-            Screen::PwGen { prof, len, pw } => {
+            Screen::PwGen { prof, len, pw, .. } => {
                 let p = &rng::PROFILES[*prof];
-                oled.text(0, 0, p.name);
-                oled.text(0, 13, &format!("len {} ~{} bits", len, rng::bits(p, *len)));
-                for (i, chunk) in pw.as_bytes().chunks(21).enumerate().take(3) {
-                    oled.text(0, 26 + 13 * i, &String::from_utf8_lossy(chunk));
+                oled.text(0, 0, "Password maker");
+                let c = format!("{}/{}", prof + 1, rng::PROFILES.len());
+                oled.text(128 - 6 * c.len(), 0, &c);
+                oled.arrow(1, 15, 0); // up
+                oled.arrow(1, 20, 1); // down
+                oled.text(10, 13, cut(p.name, 19));
+                oled.arrow(1, 28, 2); // left
+                oled.arrow(5, 28, 3); // right
+                let unit = if p.kind == rng::Kind::Words { "words" } else { "chars" };
+                oled.text(12, 26, &format!("{} {}  ~{} bits", len, unit, rng::bits(p, *len)));
+                let bytes = pw.as_bytes();
+                let l1 = String::from_utf8_lossy(&bytes[..bytes.len().min(21)]).to_string();
+                oled.text(0, 39, &l1);
+                if bytes.len() > 21 {
+                    let end = bytes.len().min(42);
+                    let mut l2 = String::from_utf8_lossy(&bytes[21..end]).to_string();
+                    if bytes.len() > 42 {
+                        l2.truncate(20);
+                        l2.push('~');
+                    }
+                    oled.text(0, 52, &l2);
+                } else {
+                    oled.text(0, 52, "OK new, hold OK type");
                 }
             }
-            Screen::Game { idx, g } => g.draw(oled, self.best[*idx]),
+            Screen::Dice { p, cur } => {
+                oled.text(0, 0, "Dice and coin");
+                oled.arrow(1, 15, 0);
+                oled.arrow(1, 20, 1);
+                oled.text(10, 13, &format!("Dice: {}   OK=roll", DICE[*p].2));
+                if !cur.is_empty() {
+                    oled.text_big(0, 28, cur, if cur.len() <= 7 { 3 } else { 2 });
+                }
+            }
+            Screen::Rand { r, result } => {
+                oled.text(0, 0, "Random number");
+                oled.arrow(1, 15, 0);
+                oled.arrow(1, 20, 1);
+                oled.text(10, 13, &format!("1 to {}  OK=pick", RANGES[*r]));
+                if let Some(v) = result {
+                    let s = v.to_string();
+                    oled.text_big(0, 28, &s, if s.len() <= 5 { 3 } else { 2 });
+                }
+            }
+            Screen::Game { idx, g } => {
+                g.draw(oled, self.best[*idx]);
+                if g.is_paused() {
+                    oled.fill_rect(6, 18, 116, 30, false);
+                    oled.rect(6, 18, 116, 30);
+                    oled.text(44, 22, "PAUSED");
+                    oled.text(16, 34, "OK=go  BACK=quit");
+                }
+            }
             Screen::Stopwatch { running, started, acc } => {
                 let t = *acc + if *running { started.elapsed() } else { Duration::ZERO };
                 oled.text(0, 0, "Stopwatch");
                 oled.text_big(4, 18, &fmt_time(t), 2);
                 oled.text(0, 52, "OK start/stop  UP reset");
+            }
+            Screen::Timer { set_s, running, end, left_ms, done } => {
+                oled.text(0, 0, "Timer");
+                let ms = if *running {
+                    end.saturating_duration_since(Instant::now()).as_millis() as u32
+                } else if *left_ms > 0 {
+                    *left_ms
+                } else {
+                    *set_s * 1000
+                };
+                let secs = (ms + 999) / 1000;
+                oled.text_big(14, 18, &format!("{:02}:{:02}", secs / 60, secs % 60), 3);
+                let hint = if *done {
+                    "TIME'S UP!  OK=reset"
+                } else if *running {
+                    "OK = pause"
+                } else {
+                    "<>10s ^v1min OK=go"
+                };
+                oled.text(0, 52, hint);
+                if *done && (self.started.elapsed().as_millis() / 350) % 2 == 0 {
+                    oled.invert_rect(0, 0, 128, 64);
+                }
             }
             Screen::Ball(a) => {
                 oled.text(0, 0, "Magic 8-ball");
@@ -802,11 +1152,10 @@ impl App {
                     }
                     Some(n) => {
                         let t = BALL[*n];
-                        // split long answers over two lines at a space
                         if t.len() > 10 {
-                            let cut = t[..t.len() / 2 + 3].rfind(' ').unwrap_or(t.len() / 2);
-                            oled.text_big(0, 16, &t[..cut], 2);
-                            oled.text_big(0, 36, t[cut..].trim_start(), 2);
+                            let cut_at = t[..t.len() / 2 + 3].rfind(' ').unwrap_or(t.len() / 2);
+                            oled.text_big(0, 16, &t[..cut_at], 2);
+                            oled.text_big(0, 36, t[cut_at..].trim_start(), 2);
                         } else {
                             oled.text_big(0, 22, t, 2);
                         }
@@ -814,7 +1163,7 @@ impl App {
                 }
             }
             Screen::Entropy(e) => {
-                oled.text(0, 0, "TRNG live test");
+                oled.text(0, 0, "Entropy meter");
                 let pct100 = if e.total > 0 { (e.ones as u64 * 10000 / e.total as u64) as u32 } else { 5000 };
                 oled.text(0, 13, &format!("{} bits", e.total));
                 oled.text(0, 26, &format!("ones {}.{:02}%", pct100 / 100, pct100 % 100));
@@ -843,11 +1192,21 @@ impl App {
             }
             Screen::About => {
                 let secs = self.started.elapsed().as_secs();
-                oled.text(0, 0, "ChocoBao v0.6");
+                oled.text(0, 0, "ChocoBao v1.0");
                 oled.text(0, 13, "Baochip-1x + Xous");
-                oled.text(0, 26, "hardware TRNG");
-                oled.text(0, 39, &format!("up {}m {}s", secs / 60, secs % 60));
-                oled.text(0, 52, if self.snd.enabled.load(Ordering::Relaxed) { "sound on" } else { "sound off" });
+                oled.text(0, 26, "350 MHz RISC-V, MMU");
+                oled.text(0, 39, "4 BIO cores, TRNG");
+                oled.text(0, 52, &format!("up {}m {}s", secs / 60, secs % 60));
+            }
+        }
+        // short wipe from the previous picture to the new one
+        if let Some(t0) = self.wipe_from {
+            let el = t0.elapsed().as_millis();
+            if el >= WIPE_MS {
+                self.wipe_from = None;
+            } else {
+                oled.wipe(&self.prev, (el * 128 / WIPE_MS) as usize);
+                self.dirty = true;
             }
         }
         disp.submit(&self.canvas);

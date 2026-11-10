@@ -170,6 +170,58 @@ impl Canvas {
         isqrt((ry * ry * (rx * rx - dx * dx) / (rx * rx)) as u32) as i32
     }
 
+    /// Small triangle arrow: dir 0 = up, 1 = down, 2 = left, 3 = right. Up/down are 5x3, left/right 3x5.
+    pub fn arrow(&mut self, x: usize, y: usize, dir: u8) {
+        match dir {
+            0 => {
+                self.fill_rect(x + 2, y, 1, 1, true);
+                self.fill_rect(x + 1, y + 1, 3, 1, true);
+                self.fill_rect(x, y + 2, 5, 1, true);
+            }
+            1 => {
+                self.fill_rect(x, y, 5, 1, true);
+                self.fill_rect(x + 1, y + 1, 3, 1, true);
+                self.fill_rect(x + 2, y + 2, 1, 1, true);
+            }
+            2 => {
+                self.fill_rect(x, y + 2, 1, 1, true);
+                self.fill_rect(x + 1, y + 1, 1, 3, true);
+                self.fill_rect(x + 2, y, 1, 5, true);
+            }
+            _ => {
+                self.fill_rect(x, y, 1, 5, true);
+                self.fill_rect(x + 1, y + 1, 1, 3, true);
+                self.fill_rect(x + 2, y + 2, 1, 1, true);
+            }
+        }
+    }
+
+    /// 8x8 monochrome icon, one byte per row, most significant bit = leftmost pixel.
+    pub fn icon(&mut self, x: usize, y: usize, rows: &[u8; 8]) {
+        for (r, &bits) in rows.iter().enumerate() {
+            for c in 0..8 {
+                if bits & (0x80 >> c) != 0 {
+                    self.pixel(x + c, y + r, true);
+                }
+            }
+        }
+    }
+
+    /// Transition helper: everything to the right of column `x` is replaced by the previous picture, with a
+    /// bright edge at the seam (the new picture "wipes in" from the left).
+    pub fn wipe(&mut self, old: &Frame, x: usize) {
+        for page in 0..H / 8 {
+            for col in x.min(W)..W {
+                self.fb[page * W + col] = old[page * W + col];
+            }
+        }
+        if x < W {
+            for y in 0..H {
+                self.pixel(x, y, true);
+            }
+        }
+    }
+
     /// Text scaled up by an integer factor (each font pixel becomes scale x scale pixels).
     pub fn text_big(&mut self, x: usize, y: usize, s: &str, scale: usize) {
         let mut cx = x;

@@ -40,6 +40,7 @@ OK=PB2 (31), UP=PC10 (5), DOWN=PC2 (11), LEFT=PC3 (10), RIGHT=PC9 (6), BACK=PB5 
 - Linux: not realistic (2 MiB RAM; no verified port); Xous is the supported OS. Real DOOM does not fit (WAD ~4 MB vs ~0.87 MB app region), hence ChocoDoom.
 
 ## 7. Gotchas learned
+- **Version number lives in `chocobao/Cargo.toml` (`version`); the About screen reads it at build time. Bump it with every flash** (now 1.2.0).
 - Bash tool: big heredocs with quotes sometimes fail to parse. Write files with the Write tool and apply edits with a small Python script (`tools/_edit_*.py`, then delete). Write requires a prior Read of an existing file.
 - Windows: `pkill` does not kill Windows Python; use PowerShell. PowerShell `Start-Process` breaks on paths with spaces; use Bash with absolute paths.
 - Do not toggle a pin at audio rate through IoxHal (floods the HAL); use the BIO tone generator. Keep OLED I2C on its own thread.

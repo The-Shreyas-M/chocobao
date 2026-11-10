@@ -1310,7 +1310,7 @@ impl App {
             }
             Screen::About => {
                 let secs = self.started.elapsed().as_secs();
-                oled.text(0, 0, "ChocoBao v1.0");
+                oled.text(0, 0, concat!("ChocoBao v", env!("CARGO_PKG_VERSION")));
                 oled.text(0, 13, "Baochip-1x + Xous");
                 oled.text(0, 26, "350 MHz RISC-V, MMU");
                 oled.text(0, 39, "4 BIO cores, TRNG");

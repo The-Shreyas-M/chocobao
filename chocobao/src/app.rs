@@ -542,7 +542,12 @@ impl App {
             (MenuId::Tools, 7) => {
                 self.goto(Screen::Show {
                     title: "Bootloader".into(),
-                    lines: vec!["entering the".into(), "bootloader...".into(), "USB will drop".into()],
+                    lines: vec![
+                        "HOLD PROG now!".into(),
+                        "reset in 5 s".into(),
+                        "release when flasher".into(),
+                        "says so".into(),
+                    ],
                     back: MenuId::Tools,
                 });
                 self.draw();

@@ -1,15 +1,17 @@
-"""flash_auto: hands-free flashing of the ChocoBao app. No buttons.
+"""flash_auto: flash the ChocoBao app with ONE button hold (PROG). No RESET tap, no re-plugging.
 
   python tools/flash_auto.py                 flash the freshly built apps.uf2
   python tools/flash_auto.py path/to/apps.uf2 [more.uf2 ...]
 
-What it does:
-  1. If the app is running, it types `bootloader` into the app's console. The app drives PROG (PC13) low
-     and resets the chip, so boot1 stays in the bootloader (the same as holding PROG while tapping RESET).
-  2. It flashes the UF2 over the boot1 serial console (about 2 s for the app).
-  3. It types `reset` into boot1. Because bootwait is disabled, the chip restarts straight into the app.
-Falls back with a clear message if a step fails. Needs the board's `bootloader` command (firmware built
-after 9 Nov); the very first time you may still need one manual PROG + RESET to install that firmware.
+What happens:
+  1. If the app is running, the script types `bootloader` into its console. The app starts a 5 s countdown and
+     then resets the whole chip (same as tapping RESET).
+  2. YOU hold PROG during that countdown (the script tells you when). boot1 sees PROG held and stays in the
+     bootloader. (Pressing PROG drops the USB connection; that is expected.)
+  3. As soon as the bootloader appears the script says "release PROG", flashes (about 2 s) and types `reset`;
+     bootwait is disabled, so the chip restarts straight into the app.
+If the board is already in the bootloader (you did PROG + RESET yourself) it skips straight to flashing.
+The very first time (firmware older than 10 Nov) the app's `bootloader` command does not exist: do PROG + RESET once.
 """
 import argparse
 import pathlib
@@ -67,7 +69,7 @@ def main():
         app = port_for(APP_PID)
         if not app:
             sys.exit("no board found (neither app nor bootloader USB id). Plug it in.")
-        print(f"app on {app}: asking it to enter the bootloader...")
+        print(f"app on {app}: asking it to reset into the bootloader...")
         try:
             s = serial.Serial(app, 1_000_000, timeout=0.2)
         except serial.SerialException as e:
@@ -75,14 +77,18 @@ def main():
         time.sleep(0.3)
         s.reset_input_buffer()
         type_slow(s, "bootloader")
-        time.sleep(1.0)
+        print("
+>>> HOLD the PROG button NOW and keep holding it (the chip resets in 5 s) <<<
+")
+        time.sleep(0.5)
         try:
             s.close()
         except Exception:
             pass
-        boot = wait_for(BOOT_PID, 30)
+        boot = wait_for(BOOT_PID, 40)
         if not boot:
-            sys.exit("the board did not enter the bootloader by itself. Fall back to: hold PROG, tap RESET, release PROG.")
+            sys.exit("the bootloader did not appear. Was PROG held through the reset? Run again, or hold PROG and tap RESET.")
+        print(">>> bootloader is up: you can RELEASE PROG now <<<")
     print(f"bootloader on {boot}")
     time.sleep(2.0)
 

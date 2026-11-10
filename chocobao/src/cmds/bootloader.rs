@@ -12,6 +12,6 @@ impl<'a> ShellCmdApi<'a> for Bootloader {
 
     fn process(&mut self, _args: String, _env: &mut CommonEnv) -> Result<Option<String>, xous::Error> {
         crate::bootmode::enter_bootloader();
-        Ok(Some(String::from("bootloader: holding PROG (PC13) low, CPU reset in 0.3 s")))
+        Ok(Some(String::from("bootloader: HOLD PROG now. Chip resets in 5 s; release PROG when the flasher says so")))
     }
 }

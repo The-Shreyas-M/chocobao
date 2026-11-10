@@ -150,9 +150,9 @@ const HELP_COUNT: usize = 19;
 
 fn help_text(id: usize) -> (&'static str, [&'static str; 4]) {
     match id {
-        H_PW => ("Password maker", ["^v  pick the type", "<>  change the length", "OK new, hold OK = type", "(click the field first)"]),
-        H_WORDS => ("Passphrase", ["<>  number of words", "^v  other types", "OK new, hold OK = type", "(click the field first)"]),
-        H_PIN => ("PIN maker", ["<>  number of digits", "^v  other types", "OK new, hold OK = type", "(click the field first)"]),
+        H_PW => ("Password maker", ["^v  pick the type", "<>  change the length", "HOLD OK: type it in", "OK tap = new secret"]),
+        H_WORDS => ("Passphrase", ["<>  number of words", "^v  other types", "HOLD OK: type it in", "OK tap = new secret"]),
+        H_PIN => ("PIN maker", ["<>  number of digits", "^v  other types", "HOLD OK: type it in", "OK tap = new secret"]),
         H_DICE => ("Dice and coin", ["^v  pick the dice", "OK  roll", "", ""]),
         H_RAND => ("Random number", ["^v  pick the range", "OK  draw a number", "", ""]),
         H_STOP => ("Stopwatch", ["OK  start / stop", "UP  reset to zero", "", ""]),
@@ -1127,7 +1127,7 @@ impl App {
                 oled.invert_rect(1, 1, 126, 14);
                 oled.text(4, 52, "OK = start  BACK = no");
             }
-            Screen::PwGen { prof, len, pw, .. } => {
+            Screen::PwGen { prof, len, .. } => {
                 let p = &rng::PROFILES[*prof];
                 // raised panel: type (UP/DOWN) with its position in the list
                 oled.card(0, 0, 128, 13);
@@ -1142,40 +1142,12 @@ impl App {
                 oled.arrow(7, 18, 3);
                 let unit = if p.kind == rng::Kind::Words { "words" } else { "chars" };
                 oled.text(14, 14, &format!("{} {} ~{} bits", len, unit, rng::bits(p, *len)));
-                // sunken panel: the secret, wrapped to fit (words are never cut in half)
+                // sunken panel: the secret is never shown; it is only typed into the PC
                 oled.inset(0, 28, 128, 36);
-                let mut lines: Vec<String> = Vec::new();
-                if p.kind == rng::Kind::Words {
-                    let mut cur = String::new();
-                    for (i, w) in pw.split('-').enumerate() {
-                        let piece = if i == 0 { w.to_string() } else { format!("-{}", w) };
-                        if cur.len() + piece.len() > 20 && !cur.is_empty() {
-                            lines.push(std::mem::take(&mut cur));
-                            cur.push_str(piece.trim_start_matches('-'));
-                        } else {
-                            cur.push_str(&piece);
-                        }
-                    }
-                    if !cur.is_empty() {
-                        lines.push(cur);
-                    }
-                } else {
-                    for chunk in pw.as_bytes().chunks(20) {
-                        lines.push(String::from_utf8_lossy(chunk).to_string());
-                    }
-                }
-                let more = lines.len() > 3;
-                for (i, l) in lines.iter().take(3).enumerate() {
-                    let mut t = l.clone();
-                    if more && i == 2 {
-                        t.truncate(19);
-                        t.push('~');
-                    }
-                    oled.text(4, 30 + 11 * i, &t);
-                }
-                if lines.len() == 1 {
-                    oled.text(4, 52, "OK new, hold OK type");
-                }
+                let masked = "*".repeat((*len).min(20));
+                oled.text(4, 30, &masked);
+                oled.text(4, 41, "Click the input box,");
+                oled.text(4, 52, "then HOLD OK to type");
             }
             Screen::Seed { n, idx, page } => {
                 oled.card(0, 0, 128, 13);

@@ -19,19 +19,20 @@ const Y0: usize = 13;
 // left half including the centre column; mirrored at start-up
 const LEFT: [&str; H] = [
     "#############",
-    "#o.....#.....",
-    "#.###.#.#.##.",
-    "#.#.........#",
-    "....#.##.#...",
-    "#.#...#...#.#",
-    "#.#.#.#.#.#.#",
-    "#.....#...#.#",
-    "#o###.#.##.o.",
+    "#o...........",
+    "#.##.###.##..",
+    "#.........##D", // D = the cage door: only ghosts (released) use it
+    "#.#.......#  ", // blanks = inside the ghost cage
+    "..........###",
+    "#.##.###.##..",
+    "#............",
+    "#o..#.....#..",
     "#############",
 ];
 
-const PAC_START: (i32, i32) = (12, 4); // (x, y)
-const GHOST_START: [(i32, i32); 3] = [(11, 3), (13, 3), (12, 1)];
+const PAC_START: (i32, i32) = (12, 7); // (x, y): bottom centre, far from the cage
+const GHOST_START: [(i32, i32); 3] = [(11, 4), (12, 4), (13, 4)]; // inside the cage
+const CAGE_EXIT: (i32, i32) = (12, 2); // just above the door
 
 // 5x5 sprites, one row per entry, bit 4 = leftmost pixel
 const PAC_CLOSED: [u8; 5] = [0b01110, 0b11111, 0b11111, 0b11111, 0b01110];
@@ -98,7 +99,7 @@ impl Pacman {
             want: (0, 0),
             ghosts: Vec::new(),
             score: 0,
-            lives: 3,
+            lives: 4,
             dots_left: dots,
             power_until: None,
             alive: true,
@@ -121,7 +122,7 @@ impl Pacman {
                 x,
                 y,
                 dir: (0, 0),
-                release_at: Instant::now() + Duration::from_millis(1500 + 2500 * i as u64),
+                release_at: Instant::now() + Duration::from_millis(3000 + 3500 * i as u64),
             });
         }
     }
@@ -131,7 +132,7 @@ impl Pacman {
         if y < 0 || y >= H as i32 {
             return true;
         }
-        self.maze[y as usize][x as usize] == b'#'
+        matches!(self.maze[y as usize][x as usize], b'#' | b'D')
     }
 
     fn scared(&self) -> bool { self.power_until.map(|t| Instant::now() < t).unwrap_or(false) }
@@ -145,11 +146,11 @@ impl Pacman {
                 if scared {
                     self.score += 200;
                     self.snd = Some(Snd::Coin);
-                    let i = GHOST_START[0];
+                    let i = GHOST_START[1];
                     g.x = i.0;
                     g.y = i.1;
                     g.dir = (0, 0);
-                    g.release_at = Instant::now() + Duration::from_millis(2500);
+                    g.release_at = Instant::now() + Duration::from_millis(3000);
                 } else {
                     lost = true;
                 }
@@ -192,7 +193,7 @@ impl Pacman {
                 *cell = b' ';
                 self.score += 50;
                 self.dots_left -= 1;
-                self.power_until = Some(Instant::now() + Duration::from_millis(6500));
+                self.power_until = Some(Instant::now() + Duration::from_millis(8000));
                 self.snd = Some(Snd::Coin);
             }
         }
@@ -211,6 +212,13 @@ impl Pacman {
             if now < self.ghosts[gi].release_at {
                 continue;
             }
+            if self.ghosts[gi].y == GHOST_START[0].1 && (11..=13).contains(&self.ghosts[gi].x) {
+                // released: leave the cage through the door
+                self.ghosts[gi].x = CAGE_EXIT.0;
+                self.ghosts[gi].y = CAGE_EXIT.1;
+                self.ghosts[gi].dir = (0, 0);
+                continue;
+            }
             let (gx, gy, gd) = (self.ghosts[gi].x, self.ghosts[gi].y, self.ghosts[gi].dir);
             let mut options: Vec<(i32, i32)> = Vec::new();
             for &d in dirs.iter() {
@@ -221,7 +229,7 @@ impl Pacman {
             if options.is_empty() {
                 options.push((-gd.0, -gd.1)); // dead end: turn around
             }
-            let random = below(trng, 100).unwrap_or(0) < if scared { 40 } else { 22 };
+            let random = below(trng, 100).unwrap_or(0) < if scared { 50 } else { 32 };
             let pick = if random {
                 options[below(trng, options.len() as u32).unwrap_or(0) as usize]
             } else {
@@ -285,7 +293,7 @@ impl Game for Pacman {
             self.hit_check();
             redraw = true;
         }
-        let ghost_ms = if self.scared() { 230 } else { 175 };
+        let ghost_ms = if self.scared() { 280 } else { 210 };
         if self.last_ghost.elapsed().as_millis() >= ghost_ms {
             self.last_ghost = Instant::now();
             self.step_ghosts(trng);
@@ -314,7 +322,14 @@ impl Game for Pacman {
                         }
                     }
                     b'.' => c.dot((sx + 2) as i32, (sy + 2) as i32, true),
-                    b'o' => c.fill_rect(sx + 1, sy + 1, 3, 3, true),
+                    // power pellet: a blinking ring, clearly not a wall block
+                    b'o' => {
+                        c.rect(sx, sy, 5, 5);
+                        if !self.mouth {
+                            c.fill_rect(sx + 2, sy + 2, 1, 1, true);
+                        }
+                    }
+                    b'D' => c.line((sx) as i32, (sy + 2) as i32, (sx + 4) as i32, (sy + 2) as i32),
                     _ => {}
                 }
             }

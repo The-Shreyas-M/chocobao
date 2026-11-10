@@ -1,117 +1,133 @@
-// logo.rs - the ChocoBao start-up animation and the HOME logo: a white steamed bao bun with pleats and
-// chocolate that keeps pouring over it from a jug (the chocolate is the dark part with a glossy shine; it runs
-// down and drips over the edge). Pure drawing code: no hardware, no allocation, integer maths only.
-use crate::oled::Canvas;
+// logo.rs - the ChocoBao start-up animation and the HOME screen: a drop falls into a small pool, the splash
+// rings out, the liquid rises in two flowing wave layers (frothy dithered top, solid body) and the name
+// "ChocoBao" sits half-submerged: the text is XOR-ed with the liquid so it stays readable on both sides of the
+// surface. Twinkling stars above. Pure drawing code: no hardware, no allocation, integer maths only.
+use crate::oled::{Canvas, H, W};
 
-pub const BOOT_MS: u32 = 3800;
+pub const BOOT_MS: u32 = 4200;
 
-/// How far the chocolate hangs down at horizontal offset `dx`: an uneven lower edge with a few long drips.
-fn drip(dx: i32) -> i32 {
-    match (dx * 7 + 31).rem_euclid(11) {
-        0 | 1 => 6,
-        2 => 2,
-        3 | 4 => 4,
-        5 => 1,
-        6 | 7 => 3,
-        8 => 7,
-        _ => 2,
+const LEVEL_END: i32 = 58; // percent of the screen height the liquid ends at
+const DROP_AT: u32 = 250; // ms: the drop starts to fall
+const HIT_AT: u32 = 700; // ms: it lands, the splash starts and the level begins to rise
+const RISE_MS: i32 = 1800;
+
+/// Parabolic sine: `a` is the phase in 0..256, the result is -64..=64.
+fn sn(a: i32) -> i32 {
+    let a = a.rem_euclid(256);
+    if a < 128 {
+        a * (128 - a) / 64
+    } else {
+        -((a - 128) * (256 - a) / 64)
     }
 }
 
-/// The bun. Lit pixels = white bun, pleats = dark lines, chocolate = dark with a lit glossy shine.
-/// `choc` = how much of the dome is covered, 0..=100 percent. `t` (ms) makes the drips keep flowing.
-fn bun(c: &mut Canvas, cx: i32, base: i32, rx: i32, ry: i32, choc: i32, t: u32) {
-    let top = base - ry;
-    for dx in -rx..=rx {
-        let h = Canvas::dome_h(rx, ry, dx);
-        for y in (base - h)..base {
-            c.dot(cx + dx, y, true);
-        }
+/// A wave of the given amplitude in pixels at phase `a`.
+fn wave(a: i32, amp: i32) -> i32 { sn(a) * amp / 64 }
+
+/// Liquid level in percent of the screen height.
+fn level(t: u32, pour: bool) -> i32 {
+    if !pour || t >= HIT_AT + RISE_MS as u32 {
+        return LEVEL_END;
     }
-    for k in [-2i32, -1, 0, 1, 2] {
-        c.line_set(cx, top + 3, cx + k * rx * 2 / 5, base - 1, false);
+    if t < HIT_AT {
+        return 8;
     }
-    if choc > 0 {
-        for dx in -rx..=rx {
-            let h = Canvas::dome_h(rx, ry, dx);
-            let surface = base - h;
-            // the drips keep creeping down and back: the chocolate never stops flowing
-            let flow = if choc >= 100 { ((t / 140 + dx.rem_euclid(5) as u32) % 4) as i32 } else { 0 };
-            let reach = ry * choc / 100 / 2 + drip(dx) * choc / 100 + flow;
-            for y in (surface + 1)..(surface + 1 + reach).min(base) {
-                c.dot(cx + dx, y, false);
+    let p = ((t - HIT_AT) as i32 * 100 / RISE_MS).min(100);
+    let eased = p * (200 - p) / 100; // ease-out
+    8 + (LEVEL_END - 8) * eased / 100
+}
+
+/// Draws the pool, the splash and the stars. `splash_t` = ms since the drop landed (None = calm).
+fn liquid(c: &mut Canvas, t: u32, lv: i32, splash_t: Option<u32>) {
+    let base = H as i32 - (H as i32 * lv / 100);
+    for x in 0..W as i32 {
+        let mut s1 = base + wave(x * 3 + (t / 7) as i32, 2);
+        let mut s2 = base + 4 + wave(x * 5 - (t / 5) as i32, 2);
+        if let Some(dt) = splash_t {
+            let d = (x - 64).abs();
+            if d < 70 {
+                let amp = 9 * 400 / (400 + dt as i32) * (70 - d) / 70;
+                let w = wave(d * 6 - (dt / 3) as i32, amp);
+                s1 += w;
+                s2 += w / 2;
             }
         }
-        if choc > 40 {
-            c.dot(cx - rx / 2, top + 3, true);
-            c.dot(cx - rx / 2 + 1, top + 4, true);
-            c.dot(cx - rx / 2 - 1, top + 5, true);
-            c.dot(cx + rx / 3, top + 4, true);
+        let s1 = s1.clamp(0, H as i32 - 1);
+        let s2 = s2.clamp(s1, H as i32 - 1);
+        c.dot(x, s1, true); // bright surface line
+        for y in (s1 + 1)..s2 {
+            if (x + y) & 1 == 0 {
+                c.dot(x, y, true); // froth
+            }
+        }
+        if s2 < H as i32 {
+            c.fill_rect(x as usize, s2 as usize, 1, (H as i32 - s2) as usize, true);
         }
     }
-    c.fill_rect((cx - rx - 3).max(0) as usize, base as usize, (2 * rx + 7) as usize, 2, true);
 }
 
-/// The chocolate jug with its spout at x-2; the stream runs from the spout down to `stream_to`.
-fn jug(c: &mut Canvas, x: i32, y: i32, stream_to: i32, t: u32) {
-    c.fill_rect(x as usize, y as usize, 9, 7, true);
-    c.fill_rect((x + 2) as usize, (y + 2) as usize, 5, 3, false);
-    c.line(x + 9, y + 1, x + 11, y + 3);
-    c.line(x + 11, y + 3, x + 9, y + 6);
-    c.line(x, y, x - 2, y + 2);
-    let sx = x - 2;
-    for yy in (y + 3)..stream_to {
-        // dashes slide downwards so the stream visibly flows
-        if (yy as u32 + t / 40) % 4 < 3 {
-            c.dot(sx, yy, true);
+fn stars(c: &mut Canvas, t: u32) {
+    const POS: [(i32, i32); 5] = [(6, 4), (121, 5), (7, 21), (120, 20), (64, 3)];
+    for (i, &(x, y)) in POS.iter().enumerate() {
+        let ph = ((t / 180) as usize + i * 2) % 8;
+        if ph < 2 {
+            c.dot(x, y, true);
+        } else if ph < 4 {
+            c.dot(x, y, true);
+            c.dot(x - 1, y, true);
+            c.dot(x + 1, y, true);
+            c.dot(x, y - 1, true);
+            c.dot(x, y + 1, true);
         }
+    }
+}
+
+/// Text that flips colour against the liquid behind it.
+fn xor_text(c: &mut Canvas, x: usize, y: usize, s: &str, scale: usize) {
+    let mut t = Canvas::new();
+    if scale > 1 {
+        t.text_big(x, y, s, scale);
+    } else {
+        t.text(x, y, s);
+    }
+    for (d, s) in c.fb.iter_mut().zip(t.fb.iter()) {
+        *d ^= *s;
     }
 }
 
 /// Full start-up animation, `t` = milliseconds since start.
 pub fn boot_frame(c: &mut Canvas, t: u32) {
-    let (cx, rx, ry) = (33, 24, 20);
-    // 0-800 ms: the bun rises from below the screen (ease-out)
-    let p = (t.min(800) * 100 / 800) as i32;
-    let eased = p * (200 - p) / 100;
-    let base = 56 + (100 - eased) * 44 / 100;
-    // chocolate keeps pouring from 900 ms to the end; the coat is complete after ~2.3 s
-    let choc = ((t.saturating_sub(900)).min(1400) * 100 / 1400) as i32;
-    bun(c, cx, base, rx, ry, choc, t);
-    if t > 700 {
-        let jx = if t < 900 { 90 - ((t - 700) as i32 * 44 / 200) } else { 46 };
-        let surface = base - ry + 2 + (ry * choc / 100 / 2);
-        if t >= 900 {
-            jug(c, jx, 3, surface.max(10), t);
-        } else {
-            jug(c, jx, 3, 3, t);
-        }
+    let lv = level(t, true);
+    let splash = if t >= HIT_AT { Some(t - HIT_AT) } else { None };
+    liquid(c, t, lv, splash);
+    // the drop falls from above the screen into the pool
+    if (DROP_AT..HIT_AT).contains(&t) {
+        let y = -4 + ((t - DROP_AT) as i32 * 63 / (HIT_AT - DROP_AT) as i32);
+        c.fill_rect(62, (y + 1).max(0) as usize, 4, 3, true);
+        c.fill_rect(63, (y - 2).max(0) as usize, 2, 3, true);
     }
-    // 2200+ ms: the name, typed out one letter per 110 ms
-    if t > 2200 {
-        let n = ((t - 2200) / 110) as usize;
-        let choco = "Choco";
-        let bao = "Bao";
-        let a = n.min(choco.len());
-        c.text_big(63, 8, &choco[..a], 2);
-        if n > choco.len() {
-            let b = (n - choco.len()).min(bao.len());
-            c.text_big(63, 30, &bao[..b], 3);
-        }
+    if t > 1500 {
+        stars(c, t);
     }
-    if t > 3200 {
-        c.text(63, 54, "multitool");
+    // the name appears letter by letter once the liquid is rising
+    if t > 1300 {
+        let n = ((t - 1300) / 90) as usize;
+        let name = "ChocoBao";
+        xor_text(c, 16, 14, &name[..n.min(name.len())], 2);
+    }
+    if t > 2900 {
+        let tag = "pocket multitool";
+        let n = ((t - 2900) / 45) as usize;
+        xor_text(c, 16, 54, &tag[..n.min(tag.len())], 1);
     }
 }
 
-/// The HOME screen: the bun with chocolate still pouring over it, plus the hint to open the menu.
+/// The HOME screen: the same pool, calm and gently moving, plus the hint to open the menu.
 pub fn home_frame(c: &mut Canvas, t: u32) {
-    bun(c, 28, 52, 22, 17, 100, t);
-    let surface = 52 - 17 + 4;
-    jug(c, 41, 2, surface, t);
-    c.text_big(60, 6, "Choco", 2);
-    c.text_big(60, 26, "Bao", 2);
+    liquid(c, t, LEVEL_END, None);
+    stars(c, t);
+    xor_text(c, 16, 14, "ChocoBao", 2);
     if (t / 700) % 4 != 3 {
-        c.text(60, 52, "BACK = menu");
+        xor_text(c, 31, 54, "BACK = menu", 1);
     }
 }

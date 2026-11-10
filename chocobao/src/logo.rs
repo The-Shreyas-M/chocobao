@@ -194,7 +194,8 @@ pub fn home_frame(c: &mut Canvas, t: u32) {
 
     // --- the bao: a shaded round bun, pleats twisting into the top knot; they sweep around as it turns
     let base = 51i32;
-    let (rx, ry) = (17i32, 17i32);
+    let ry = 17i32;
+    let rx = 11 + 6 * cosn(a).abs() / 64; // the bun turns: its width breathes
     let top = base - ry;
     for dx in -rx..=rx {
         let h = Canvas::dome_h(rx, ry, dx);
@@ -234,6 +235,13 @@ pub fn home_frame(c: &mut Canvas, t: u32) {
         let reach = ry / 3 + drip(dx) + flow;
         for y in (surface + 1)..(surface + 1 + reach).min(base - 1) {
             c.dot(cx + dx, y, false);
+        }
+    }
+    // seeds on the surface travel around with the rotation (dark dots on the light body)
+    for k in 0..6i32 {
+        let ph = a + k * 43;
+        if cosn(ph) > 6 {
+            c.dot(cx + rx * 9 / 10 * sn(ph) / 64, base - 5 - (k % 3) * 3, false);
         }
     }
     c.dot(cx - rx / 2, top + 3, true); // shine

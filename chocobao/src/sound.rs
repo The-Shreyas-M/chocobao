@@ -228,7 +228,7 @@ fn init_tone() -> Result<Tone, String> {
 impl Tone {
     /// Start a note and return immediately (the core plays it by itself).
     fn start(&mut self, hz: u32, ms: u32) {
-        let half = (TICK_HZ / (2 * hz.clamp(50, 5000))).max(1);
+        let half = (TICK_HZ / (2 * hz.clamp(50, 250_000))).max(1);
         let periods = (hz as u64 * ms as u64 / 1000).max(1) as u32;
         self.tx.csr.wo(bio_bdma::SFR_TXF1, half);
         self.tx.csr.wo(bio_bdma::SFR_TXF1, periods);

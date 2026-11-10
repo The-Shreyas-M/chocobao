@@ -1,6 +1,6 @@
 [package]
 name = "chocobao"
-version = "1.5.0"
+version = "2.0.0"
 edition = "2021"
 
 [dependencies]
@@ -29,6 +29,11 @@ xous-usb-hid = { git = "https://github.com/betrusted-io/xous-usb-hid.git", branc
 
 bio-lib = { path = "../../libs/bio-lib" }
 arbitrary-int = "1.2"
+
+ed25519-dalek = { package = "ed25519-dalek-compat", path = "../../bao1x-boot/ed25519-dalek-compat", default-features = false, features = [
+    "digest",
+    "zeroize",
+] }
 
 # loadable BIO
 keystore = { path = "../../services/keystore", features = ["board-dabao"] }

@@ -2,7 +2,7 @@
 // no pixel stays on (OLED burn-in). `kind` is chosen in Settings > Screensaver.
 use crate::oled::Canvas;
 
-pub const NAMES: [&str; 4] = ["Drifting bun", "Auto Pong", "Eyes", "Escape artist"];
+pub const NAMES: [&str; 6] = ["Drifting bun", "Auto Pong", "Eyes", "Escape artist", "Bao and bar", "Surprise me"];
 pub const COUNT: usize = NAMES.len();
 
 const I_BUN: [u8; 8] = [0x18, 0x3C, 0x7E, 0xFF, 0xFF, 0xFF, 0x7E, 0xFF];
@@ -25,7 +25,9 @@ pub fn draw(c: &mut Canvas, kind: usize, t: u32) {
         0 => c.icon(tri(t / 110, 118) as usize, tri(t / 170, 54) as usize, &I_BUN),
         1 => pong(c, t),
         2 => eyes(c, t),
-        _ => walker(c, t),
+        3 => walker(c, t),
+        4 => bao_bar(c, t),
+        _ => draw(c, ((t / 60_000) % 5) as usize, t),
     }
 }
 
@@ -53,7 +55,7 @@ fn pong(c: &mut Canvas, t: u32) {
 const R: i32 = 11; // eye radius
 const FEED_AT: u32 = 13_000; // ms into every 20 s cycle when the chocolate bar arrives
 const CYCLE: u32 = 20_000;
-const MOODS: u32 = 10; // neutral, happy, sad, angry, surprised, sleepy, wink, love, dizzy, suspicious
+const MOODS: u32 = 13; // neutral, happy, sad, angry, surprised, sleepy, wink, love, dizzy, suspicious, crying, laughing, bored
 const HEART: [u8; 6] = [0b0110110, 0b1111111, 0b1111111, 0b0111110, 0b0011100, 0b0001000];
 
 fn disc(c: &mut Canvas, cx: i32, cy: i32, r: i32) {
@@ -99,7 +101,8 @@ fn eye(c: &mut Canvas, cx: i32, cy: i32, inner: i32, mood: u32, blink: i32, gaze
         let s = dx * inner; // positive towards the nose
         let mut up = -R - 1;
         match mood {
-            2 => up = -R / 3 - s * 2 / 3,  // sad: the outer corner droops
+            2 | 10 => up = -R / 3 - s * 2 / 3,  // sad / crying: the outer corner droops
+            12 => up = -R / 8,                  // bored: heavy lids
             3 => up = -R / 3 + s * 2 / 3,  // angry: the inner corner drops
             5 => up = 1,                    // sleepy: half closed
             9 => up = -R / 5,               // suspicious: narrowed
@@ -116,7 +119,7 @@ fn eye(c: &mut Canvas, cx: i32, cy: i32, inner: i32, mood: u32, blink: i32, gaze
                 c.dot(cx + dx, cy + up, true);
             }
         }
-        if mood == 1 || mood == 7 {
+        if mood == 1 || mood == 7 || mood == 11 {
             // happy: the lower lid pushes up in an arch
             let b = -R / 3 + dx * dx * 4 / (3 * R);
             for y in (cy + b + 1)..=(cy + h) {
@@ -231,14 +234,18 @@ fn eyes(c: &mut Canvas, t: u32) {
     let mut blink = if ph < 160 { 100 - (ph as i32 - 80).abs() * 100 / 80 } else { 0 };
     let mut mshape = match mood {
         1 | 6 | 7 => 1,
-        2 | 3 => 2,
+        2 | 3 | 10 => 2,
+        11 => 6,
         4 => 3,
         8 => 4,
         9 => 5,
         _ => 0,
     };
-    let mut open = 0;
+    let mut open = if mood == 11 { 45 + tri(t / 70, 30) } else { 0 };
     let mut blink_r = blink;
+    if mood == 12 {
+        gaze = (3, -3);
+    }
     if mood == 5 {
         blink = 50 + tri(t / 40, 40); // sleepy: slow droop
         blink_r = blink;
@@ -292,6 +299,58 @@ fn eyes(c: &mut Canvas, t: u32) {
     eye(c, ex1, ey, 1, mood, blink.clamp(0, 100), gaze, t);
     eye(c, ex2, ey, -1, mood, blink_r.clamp(0, 100), gaze, t);
     mouth(c, 64 + ox, my, mshape, open, t);
+    if mood == 10 && !feeding {
+        for (k, ex) in [ex1, ex2].iter().enumerate() {
+            for j in 0..2u32 {
+                let fall = ((t / 50 + j * 7 + k as u32 * 3) % 22) as i32;
+                c.dot(*ex - 4 + (j as i32) * 8, ey + R + 1 + fall, true);
+                c.dot(*ex - 4 + (j as i32) * 8, ey + R + 2 + fall, true);
+            }
+        }
+    }
+}
+
+/// A little bao walks up to a chocolate bar, eats it square by square, hops happily and walks on; then a new bar appears.
+fn bao_bar(c: &mut Canvas, t: u32) {
+    let u = t % 12_000;
+    let oy = tri(t / 700, 6) - 3;
+    let ox = tri(t / 900, 6) - 3;
+    let eaten = if u < 3500 { 0 } else { ((u - 3500) / 600).min(6) as i32 };
+    // the bar: 2 columns x 3 rows of squares, eaten from the left side
+    for r in 0..3i32 {
+        for q in 0..2i32 {
+            let idx = r * 2 + q;
+            let gone = (idx < eaten) || (u > 8200);
+            if gone {
+                continue;
+            }
+            let (bx, by) = (90 + ox + q * 9, 18 + oy + r * 9);
+            c.rect(bx as usize, by as usize, 9, 9);
+            c.fill_rect((bx + 2) as usize, (by + 2) as usize, 4, 1, true);
+        }
+    }
+    // the bun
+    let x = if u < 3500 {
+        10 + (u as i32) * 64 / 3500
+    } else if u < 8500 {
+        74
+    } else {
+        74 + ((u - 8500) as i32) * 70 / 3500
+    };
+    let hop = if (7100..8500).contains(&u) { ((u - 7100) / 120 % 2) as i32 * -5 } else { 0 };
+    let bob = if u < 3500 || u >= 8500 { ((t / 140) % 2) as i32 } else { 0 };
+    let (cx, base) = (x + ox, 50 + oy + hop - bob);
+    for dx in -11..=11i32 {
+        let h = Canvas::dome_h(11, 12, dx);
+        c.fill_rect((cx + dx).max(0) as usize, (base - h).max(0) as usize, 1, h.max(1) as usize, true);
+    }
+    c.dot(cx - 4, base - 7, false);
+    c.dot(cx + 3, base - 7, false);
+    if (3500..7100).contains(&u) && (u / 150) % 2 == 0 {
+        for dy in 0..4i32 {
+            c.fill_rect((cx + 4).max(0) as usize, (base - 5 + dy).max(0) as usize, 8, 1, false); // chomp
+        }
+    }
 }
 
 // ------------------------------------------------------------------ the escape artist

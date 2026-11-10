@@ -5,6 +5,7 @@ mod diag;
 mod display;
 mod doom;
 mod games;
+mod games2;
 mod logo;
 mod mandel;
 mod oled;
@@ -14,6 +15,7 @@ mod rng;
 mod saver;
 mod seed;
 mod sound;
+mod tools2;
 mod typing;
 mod cmds;
 #[cfg(feature = "ctap-bringup")]

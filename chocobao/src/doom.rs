@@ -5,6 +5,7 @@
 // 0.87 MB) and the engine wants several MB of RAM; the chip has 2 MiB shared with the OS. This engine keeps the
 // idea (first-person view, enemies that chase you, shooting) in a few KiB. It uses f32, which is software
 // emulated on this CPU but still cheap at 64 rays per frame.
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 use bao1x_hal_service::trng::Trng;
@@ -31,6 +32,32 @@ const MAP: [&str; 16] = [
     "#..............#",
     "################",
 ];
+
+const MAP2: [&str; 16] = [
+    "################",
+    "#......#.......#",
+    "#.####.#.#####.#",
+    "#.#....#.....#.#",
+    "#.#.######.#.#.#",
+    "#.#........#.#.#",
+    "#.########.#.#.#",
+    "#..........#...#",
+    "####.#######.###",
+    "#....#.......#.#",
+    "#.####.#####.#.#",
+    "#......#...#...#",
+    "#.######.#.#####",
+    "#........#.....#",
+    "#.##########...#",
+    "################",
+];
+
+static LEVEL: AtomicUsize = AtomicUsize::new(0);
+static NEXT_LEVEL: AtomicUsize = AtomicUsize::new(0);
+
+fn map() -> &'static [&'static str; 16] {
+    if LEVEL.load(Ordering::Relaxed) == 1 { &MAP2 } else { &MAP }
+}
 
 const NCOL: usize = 64; // rays per frame, each drawn 2 pixels wide
 const VIEW_TOP: i32 = 12;
@@ -62,6 +89,8 @@ pub struct Doom {
     turn_v: f32,
     move_v: f32,
     fire_held: bool,
+    born: Instant,
+    level: usize,
     alive: bool,
     won: bool,
     paused: bool,
@@ -74,16 +103,25 @@ fn is_wall(x: f32, y: f32) -> bool {
         return true;
     }
     let (ix, iy) = (x as usize, y as usize);
-    if iy >= MAP.len() || ix >= MAP[0].len() {
+    let m = map();
+    if iy >= m.len() || ix >= m[0].len() {
         return true;
     }
-    MAP[iy].as_bytes()[ix] == b'#'
+    m[iy].as_bytes()[ix] == b'#'
 }
 
 impl Doom {
     pub fn new(_trng: &Trng) -> Self {
-        let spots = [(13.5, 1.5), (13.5, 13.5), (8.0, 8.0), (1.5, 13.5), (8.0, 5.0)];
+        let level = NEXT_LEVEL.load(Ordering::Relaxed);
+        LEVEL.store(level, Ordering::Relaxed);
+        let spots: Vec<(f32, f32)> = if level == 0 {
+            vec![(13.5, 1.5), (13.5, 13.5), (8.0, 8.0), (1.5, 13.5), (8.0, 5.0)]
+        } else {
+            vec![(13.5, 1.5), (13.5, 13.5), (8.5, 5.5), (5.5, 11.5), (9.5, 9.5), (4.5, 5.5), (13.5, 7.5)]
+        };
         Doom {
+            born: Instant::now(),
+            level,
             px: 1.5,
             py: 1.5,
             a: 0.6,
@@ -271,16 +309,36 @@ impl Game for Doom {
         } else if self.enemies.iter().all(|e| e.hp <= 0) {
             self.alive = false;
             self.won = true;
+            NEXT_LEVEL.store(1 - self.level, Ordering::Relaxed); // OK after winning starts the other level
             changed = true;
         }
         changed || self.fire_cd > 0.0
     }
 
     fn draw(&self, c: &mut Canvas, _best: u32) {
-        c.text(0, 0, &format!("HP {}  KILLS {}/{}", self.hp.max(0), self.kills, self.enemies.len()));
+        c.text(0, 0, &format!("L{} HP {} KILLS {}/{}", self.level + 1, self.hp.max(0), self.kills, self.enemies.len()));
         let (dx, dy) = (self.a.cos(), self.a.sin());
         let (plx, ply) = (-dy * 0.66, dx * 0.66);
         let mid = VIEW_TOP + VIEW_H / 2;
+        // ---- floor and ceiling: dither that gets denser towards the viewer
+        for y in VIEW_TOP..64 {
+            let dist = (y - mid).abs();
+            if dist < 2 {
+                continue;
+            }
+            for x in 0..128i32 {
+                let on = if y > mid {
+                    if dist < 6 { (x & 3 == 0) && (y & 3 == 0) } else if dist < 14 { (x + y) & 3 == 0 } else if dist < 24 { (x + y) & 1 == 0 && (x & 1 == 0) } else { (x + y) & 1 == 0 }
+                } else if dist < 12 {
+                    (x & 3 == 0) && (y & 3 == 0)
+                } else {
+                    false
+                };
+                if on {
+                    c.dot(x, y, true);
+                }
+            }
+        }
         let mut zbuf = [20.0f32; NCOL];
         // ---- walls
         for col in 0..NCOL {
@@ -314,10 +372,20 @@ impl Game for Doom {
             let level = if perp < 1.6 { 0 } else if perp < 3.2 { 1 } else if perp < 5.5 { 2 } else { 3 };
             let level = if side == 1 && level < 3 { level + 1 } else { level };
             let x = (col * 2) as i32;
+            // brick texture: where along the wall did the ray hit
+            let wallx = if side == 0 { self.py + perp * rdy } else { self.px + perp * rdx };
+            let tex_x = (((wallx - wallx.floor()) * 8.0) as i32) & 7;
+            let top_y = mid - h / 2;
             for y in y0..=y1 {
+                let ty = ((y - top_y) * 8 / h.max(1)).max(0);
+                let mortar = ty % 4 == 0 || (tex_x + (ty / 4) * 4) % 8 == 0;
                 for xx in x..x + 2 {
-                    if shade(level, xx, y) || y == y0 || y == y1 {
+                    if y == y0 || y == y1 {
                         c.dot(xx, y, true);
+                    } else if !mortar || level >= 2 {
+                        if shade(level, xx, y) {
+                            c.dot(xx, y, true);
+                        }
                     }
                 }
             }
@@ -352,6 +420,35 @@ impl Game for Doom {
                     }
                 }
             }
+        }
+        // ---- minimap (top right): walls, enemies and you
+        {
+            let (mx0, my0) = (110usize, 11usize);
+            c.fill_rect(mx0 - 1, my0 - 1, 18, 18, false);
+            c.rect(mx0 - 1, my0 - 1, 18, 18);
+            for (yy, row) in map().iter().enumerate() {
+                for (xx, ch) in row.bytes().enumerate() {
+                    if ch == b'#' {
+                        c.dot((mx0 + xx) as i32, (my0 + yy) as i32, true);
+                    }
+                }
+            }
+            for e in self.enemies.iter().filter(|e| e.hp > 0) {
+                if (self.born.elapsed().as_millis() / 250) % 2 == 0 {
+                    c.dot(mx0 as i32 + e.x as i32, my0 as i32 + e.y as i32, true);
+                }
+            }
+            let (pxm, pym) = (mx0 as i32 + self.px as i32, my0 as i32 + self.py as i32);
+            c.dot(pxm, pym, false);
+            c.dot(pxm + (self.a.cos() * 2.0) as i32, pym + (self.a.sin() * 2.0) as i32, true);
+        }
+        // ---- first seconds: how to play
+        if self.born.elapsed().as_millis() < 3500 && self.alive {
+            c.fill_rect(8, 14, 94, 40, false);
+            c.rect(8, 14, 94, 40);
+            c.text(12, 17, "UP/DOWN  walk");
+            c.text(12, 28, "LEFT/RIGHT turn");
+            c.text(12, 39, "OK shoot (hold)");
         }
         // ---- crosshair and gun
         c.dot(64, mid, true);

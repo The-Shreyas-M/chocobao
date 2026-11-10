@@ -16,6 +16,17 @@ Status key: [ ] open, [~] in progress, [x] done. Rewritten 10 Nov 2026 (firmware
 - [x] Neumorphic look started: raised cards for menu rows and password panels, sunken panel for the secret. Passphrase wraps by words.
 - [x] BUILD_GUIDE.md rewritten (all connections). HANDOFF.md rewritten.
 
+## v2.0.0 (built 10 Nov night, NOT flashed, nothing seen on the real screen yet): the whole backlog below was implemented
+- [x] Home: bao now visibly turns (width breathes, seeds travel around), microwave/bar as asked.
+- [x] 11 new games (`games2.rs`): Breakout, Block Drop, 2048, Tic-Tac-Toe, Connect 4, Memory Pairs, Whack-a-Mole, Minesweeper (hold OK = flag), Space Shooter, Lunar Lander, Maze Runner. PC smoke-tested only.
+- [x] ChocoDoom round 2: brick walls, floor/ceiling dither, minimap, how-to overlay, 2 levels (OK after a win starts the other level), autofire.
+- [x] Tools (`tools2.rs`): Calculator, Unit converter, Base converter, Metronome, Habit counter, Morse trainer, Text presets (edit the PRESETS list, hold OK types), Flashlight.
+- [x] Music: Chord synth (4 voices time-shared on one pin). Lab: Button scope (CPU sampled), TRNG health, AM beacon (250 kHz carrier keyed in morse, unverified with a radio), Notary.
+- [x] Notary (in-app): Ed25519 key from the TRNG kept in RAM only, each UP/DOWN/LEFT/RIGHT press signs "CHOCONOTARY1|n|ms|event"; hold OK types `msg|sig|pub`; `tools/verify.py` checks it on the PC (pure Python, RFC 8032 vector tested).
+- [x] Settings: Idle time, Invert screen. Savers: 13 eye moods (crying, laughing, bored added), Bao and bar, Surprise me.
+- [ ] NOT done: isolated Notary process + MMU "game reads the key and is killed" demo (needs a second Xous process/service and kernel plumbing); glitch/tamper sensors (the SENSORC registers belong to the loader/kernel and sit next to one-way wipe counters, deliberately not touched); display contrast; custom text input; tunes (still need the MIDI files for `tools/midi2tune.py`); countdown-to-date (the clock has no date); real 4-pin 4-voice synth (needs wiring).
+- Flash size: apps.img is about 685 KB of roughly 870 KB, so not much room is left.
+
 ## Backlog from the 10 Nov evening session (user's list, do in this order)
 Done in v1.5.0 (built, NOT flashed yet, unseen on screen): Doom smooth + responsive (time-based movement with acceleration, shots every 0.16 s, hold OK to autofire, wider hit cone, button poll 4 ms), "by Shreyas" in About / home / boot, new chip-themed boot (chip draws itself, 4 cores light, padlock, TRNG noise settles into the title), landscape microwave + shaded 3D-ish spinning bao + 2-column chocolate bar, Eyes saver with 10 moods + mouth that eats a chocolate bar + drifting pixels (no more blank screen), Piano removed, BUILD_GUIDE rewritten with a table per part and ASCII wiring (speaker section 9), `tools/midi2tune.py`.
 - [ ] **Flash v1.5.0 and check:** Doom feel (turn, sprint, shoot an enemy that appears), boot animation, home, eyes + feeding, About name. If Doom is still laggy: measure with `diag` (loopmax, pushmax); the OLED push (about 30 ms per frame over I2C) may be the limit, then raise the I2C clock or draw fewer pixels.

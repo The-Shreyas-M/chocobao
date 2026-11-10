@@ -222,11 +222,17 @@ impl Panel {
                     }
                 }
             }
-            let ok = self.cmds(&[0x21, c0 as u8, c1 as u8, 0x22, page as u8, page as u8])
-                && matches!(self.i2c.i2c_write(ADDR, 0x40, &new[c0..=c1]), Ok(I2cResult::Ack(_)));
+            // ONE transaction per page: control byte 0x80 = "one command follows", repeated for the address
+            // window, then control byte 0x40 = "all the rest is display data".
+            let mut buf: Vec<u8> = Vec::with_capacity(16 + (c1 - c0 + 1));
+            buf.extend_from_slice(&[
+                0x21, 0x80, c0 as u8, 0x80, c1 as u8, 0x80, 0x22, 0x80, page as u8, 0x80, page as u8, 0x40,
+            ]);
+            buf.extend_from_slice(&new[c0..=c1]);
+            let mut ok = matches!(self.i2c.i2c_write(ADDR, 0x80, &buf), Ok(I2cResult::Ack(_)));
             if !ok {
-                self.sent_valid = false;
-                return false;
+                // one immediate retry before giving up on this frame
+                ok = matches!(self.i2c.i2c_write(ADDR, 0x80, &buf), Ok(I2cResult::Ack(_)));
             }
             self.sent[page * W + c0..page * W + c1 + 1].copy_from_slice(&new[c0..=c1]);
         }

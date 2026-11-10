@@ -13,13 +13,18 @@ use std::time::{Duration, Instant};
 
 use crate::oled::{Canvas, Frame, Panel, H, W};
 
-const REFRESH_MS: u32 = 3000;
+const REFRESH_MS: u32 = 2000; // full resend (no display-off) to heal any glitch
+const MIN_GAP_MS: u32 = 40; // at most 25 pushes per second
+const REINIT_AFTER_FAILS: u32 = 3;
 
 struct Shared {
     frame: Mutex<Frame>,
     seq: AtomicU32,
     busy_since: AtomicU32, // 0 = idle, otherwise ms since `t0` (+1)
     present: AtomicBool,
+    pushes: AtomicU32,
+    fails: AtomicU32,
+    max_ms: AtomicU32,
     t0: Instant,
 }
 
@@ -36,6 +41,9 @@ impl Display {
             seq: AtomicU32::new(0),
             busy_since: AtomicU32::new(0),
             present: AtomicBool::new(false),
+            pushes: AtomicU32::new(0),
+            fails: AtomicU32::new(0),
+            max_ms: AtomicU32::new(0),
             t0: Instant::now(),
         });
         let (tx, rx) = std::sync::mpsc::channel();
@@ -65,6 +73,15 @@ impl Display {
         }
     }
 
+    /// (successful pushes, failed pushes, slowest push in ms)
+    pub fn stats(&self) -> (u32, u32, u32) {
+        (
+            self.sh.pushes.load(Ordering::Relaxed),
+            self.sh.fails.load(Ordering::Relaxed),
+            self.sh.max_ms.load(Ordering::Relaxed),
+        )
+    }
+
     #[allow(dead_code)]
     pub fn present(&self) -> bool { self.sh.present.load(Ordering::SeqCst) }
 }
@@ -84,29 +101,44 @@ fn thread_main(sh: Arc<Shared>, ready: std::sync::mpsc::Sender<bool>) {
     }
     let mut shown = u32::MAX;
     let mut last_full = now_ms(&sh);
+    let mut last_push = 0u32;
+    let mut consecutive_fails = 0u32;
     let mut local: Frame = [0; W * H / 8];
     loop {
         let r = catch_unwind(AssertUnwindSafe(|| {
+            let now = now_ms(&sh);
             let seq = sh.seq.load(Ordering::SeqCst);
-            let due = now_ms(&sh).saturating_sub(last_full) >= REFRESH_MS;
-            if seq != shown || due {
+            let due = now.saturating_sub(last_full) >= REFRESH_MS;
+            if (seq != shown || due) && now.saturating_sub(last_push) >= MIN_GAP_MS {
                 if let Ok(f) = sh.frame.lock() {
                     local.copy_from_slice(&*f);
                 }
-                sh.busy_since.store(now_ms(&sh) + 1, Ordering::SeqCst);
+                sh.busy_since.store(now + 1, Ordering::SeqCst);
                 if due {
-                    panel.init();
-                    panel.invalidate();
-                    last_full = now_ms(&sh);
+                    panel.invalidate(); // resend everything, but never switch the panel off
+                    last_full = now;
                 }
                 let ok = panel.push(&local);
+                let took = now_ms(&sh).saturating_sub(now);
                 sh.busy_since.store(0, Ordering::SeqCst);
+                last_push = now_ms(&sh);
+                if took > sh.max_ms.load(Ordering::Relaxed) {
+                    sh.max_ms.store(took, Ordering::Relaxed);
+                }
                 if ok {
+                    sh.pushes.fetch_add(1, Ordering::Relaxed);
+                    consecutive_fails = 0;
                     shown = seq;
                 } else {
-                    log::info!("display: transfer failed, will resend");
+                    sh.fails.fetch_add(1, Ordering::Relaxed);
+                    consecutive_fails += 1;
+                    if consecutive_fails >= REINIT_AFTER_FAILS {
+                        sh.busy_since.store(now_ms(&sh) + 1, Ordering::SeqCst);
+                        panel.init(); // the controller may have lost its settings
+                        sh.busy_since.store(0, Ordering::SeqCst);
+                        consecutive_fails = 0;
+                    }
                     last_full = now_ms(&sh).saturating_sub(REFRESH_MS - 300); // full refresh in 0.3 s
-                    tt.sleep_ms(100).ok();
                 }
             }
         }));
@@ -114,6 +146,6 @@ fn thread_main(sh: Arc<Shared>, ready: std::sync::mpsc::Sender<bool>) {
             log::error!("display thread panic caught");
             sh.busy_since.store(0, Ordering::SeqCst);
         }
-        tt.sleep_ms(15).ok();
+        tt.sleep_ms(10).ok();
     }
 }

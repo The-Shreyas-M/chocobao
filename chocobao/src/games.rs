@@ -463,7 +463,7 @@ impl Flappy {
     pub fn new(trng: &Trng) -> Self {
         let g = 16 + below(trng, 20).unwrap_or(0) as i32;
         Flappy {
-            y: 30 * 8,
+            y: 32 * 8,
             vy: 0,
             pipes: vec![(150, g, false)],
             score: 0,
@@ -479,7 +479,7 @@ impl Game for Flappy {
     fn press(&mut self, b: Btn, _t: &Trng) -> bool {
         if matches!(b, Btn::Ok | Btn::Up) && self.alive {
             self.started = true;
-            self.vy = -26;
+            self.vy = -18; // one flap lifts the bird about 11 px
             self.snd = Some(Snd::Click);
             return true;
         }

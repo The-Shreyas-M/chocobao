@@ -56,6 +56,7 @@ fn items(m: MenuId) -> &'static [&'static str] {
             "Buzzer test",
             "SOS beeps",
             "Sound on/off",
+            "Diagnostics",
             "Bootloader",
         ],
     }
@@ -109,6 +110,7 @@ enum Screen {
     Ball(Option<usize>),
     Entropy(Entropy),
     ButtonTest,
+    Diag,
     About,
 }
 
@@ -140,6 +142,7 @@ struct App {
     sound_done: bool,
     anim_at: Instant,
     rep_at: Instant,
+    panics: u32,
     dirty: bool,
     last_secs: u64,
 }
@@ -174,6 +177,7 @@ fn run(rx: Receiver<Input>) {
         sound_done: false,
         anim_at: Instant::now(),
         rep_at: Instant::now(),
+        panics: 0,
         dirty: true,
         last_secs: 0,
     };
@@ -225,7 +229,7 @@ fn run(rx: Receiver<Input>) {
     }
 }
 
-fn beeps_for(s: Snd) -> &'static [sound::Beep] {
+fn beeps_for(s: Snd) -> &'static [sound::Note] {
     match s {
         Snd::Click => sound::CLICK,
         Snd::Coin => sound::COIN,
@@ -249,12 +253,21 @@ impl App {
     /// Something went wrong on this screen: go home, keep running.
     fn recover(&mut self) {
         log::error!("recovered from a panic, back to HOME");
+        self.panics += 1;
         self.status = "recovered".into();
         self.goto(Screen::Home);
     }
 
     fn start_game(&mut self, idx: usize) {
         let g = (GAMES[idx].make)(&self.trng);
+        let tune: Option<&'static [sound::Note]> = match idx {
+            0 => Some(sound::TUNE_DODGER),
+            1 => Some(sound::TUNE_SNAKE),
+            2 => Some(sound::TUNE_PONG),
+            3 => Some(sound::TUNE_FLAPPY),
+            _ => None,
+        };
+        self.snd.tune(tune);
         self.goto(Screen::Game { idx, g });
     }
 
@@ -390,16 +403,15 @@ impl App {
     }
 
     fn on_ok(&mut self, held_ms: u32) {
+        let _ = held_ms;
         enum Act {
             None,
-            Quick(bool),
             Select(MenuId, usize),
             Roll(usize),
             Shake,
             PwOk(bool),
         }
         let act = match &self.screen {
-            Screen::Home => Act::Quick(held_ms >= 1000),
             Screen::Menu(m, sel) => Act::Select(*m, *sel),
             Screen::Dice(p, _) => Act::Roll(*p),
             Screen::Ball(_) => Act::Shake,
@@ -408,7 +420,6 @@ impl App {
         };
         match act {
             Act::None => {}
-            Act::Quick(words) => self.quick_type(words),
             Act::Select(m, sel) => self.select(m, sel),
             Act::Roll(p) => self.roll(p),
             Act::PwOk(type_it) => {
@@ -454,6 +465,7 @@ impl App {
             Screen::Ball(_) => Screen::Menu(MenuId::Tools, 1),
             Screen::Entropy(_) => Screen::Menu(MenuId::Tools, 2),
             Screen::ButtonTest => Screen::Menu(MenuId::Tools, 3),
+            Screen::Diag => Screen::Menu(MenuId::Tools, 7),
             Screen::About => Screen::Menu(MenuId::Main, 4),
         };
         self.snd.silence();
@@ -517,15 +529,11 @@ impl App {
             (MenuId::Tools, 2) => self.goto(Screen::Entropy(Entropy { total: 0, ones: 0, bins: [0; 16] })),
             (MenuId::Tools, 3) => self.goto(Screen::ButtonTest),
             (MenuId::Tools, 4) => {
-                self.snd.play(sound::TEST);
+                self.snd.play(sound::SCALE);
+                let st = self.snd.status_text();
                 self.goto(Screen::Show {
                     title: "Buzzer test".into(),
-                    lines: vec![
-                        "1 steady on".into(),
-                        "2 fast buzz".into(),
-                        "3 slow buzz".into(),
-                        "which did you hear?".into(),
-                    ],
+                    lines: vec!["scale from C#4".into(), "buzzer + on pin 32".into(), "(PB3), - on GND".into(), st],
                     back: MenuId::Tools,
                 });
             }
@@ -539,7 +547,8 @@ impl App {
                     back: MenuId::Tools,
                 });
             }
-            (MenuId::Tools, 7) => {
+            (MenuId::Tools, 7) => self.goto(Screen::Diag),
+            (MenuId::Tools, 8) => {
                 self.goto(Screen::Show {
                     title: "Bootloader".into(),
                     lines: vec![
@@ -665,7 +674,7 @@ impl App {
                     self.dirty = true; // redraw the seconds
                 }
             }
-            Screen::About => {
+            Screen::About | Screen::Diag => {
                 let secs = self.started.elapsed().as_secs();
                 if secs != self.last_secs {
                     self.last_secs = secs;
@@ -701,14 +710,7 @@ impl App {
         oled.clear();
         match &self.screen {
             Screen::Boot(t0) => logo::boot_frame(oled, t0.elapsed().as_millis() as u32),
-            Screen::Home => {
-                oled.text(0, 0, "ChocoBao v0.4");
-                oled.text(0, 13, "OK: type password");
-                oled.text(0, 26, "hold OK: 6 words");
-                oled.text(0, 39, "BACK: menu");
-                oled.text(0, 52, &self.status);
-                logo::mini(oled, 114, 30, self.started.elapsed().as_millis() as u32);
-            }
+            Screen::Home => logo::home_frame(oled, self.started.elapsed().as_millis() as u32),
             Screen::Menu(m, sel) => {
                 oled.text(0, 0, title(*m));
                 let list = items(*m);
@@ -804,9 +806,18 @@ impl App {
                     oled.text(col * 66, 13 + 13 * row, &format!("{:<5}{}", BTN_NAMES[i], state));
                 }
             }
+            Screen::Diag => {
+                let (ok, bad, slow) = disp.stats();
+                let secs = self.started.elapsed().as_secs();
+                oled.text(0, 0, "Diagnostics");
+                oled.text(0, 13, &format!("up {}m{}s panics {}", secs / 60, secs % 60, self.panics));
+                oled.text(0, 26, &format!("oled ok {} bad {}", ok, bad));
+                oled.text(0, 39, &format!("slowest push {} ms", slow));
+                oled.text(0, 52, &self.snd.status_text());
+            }
             Screen::About => {
                 let secs = self.started.elapsed().as_secs();
-                oled.text(0, 0, "ChocoBao v0.4");
+                oled.text(0, 0, "ChocoBao v0.6");
                 oled.text(0, 13, "Baochip-1x + Xous");
                 oled.text(0, 26, "hardware TRNG");
                 oled.text(0, 39, &format!("up {}m {}s", secs / 60, secs % 60));

@@ -56,6 +56,7 @@ def type_slow(s, text):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("files", nargs="*")
+    ap.add_argument("--wait", action="store_true", help="do not send the command; wait up to 3 min for the bootloader (you start it from the device: Tools > Bootloader, then hold PROG)")
     a = ap.parse_args()
     files = a.files or [str(DEFAULT)]
     blocks = []
@@ -65,6 +66,11 @@ def main():
         blocks += b
 
     boot = port_for(BOOT_PID)
+    if not boot and a.wait:
+        print('waiting for the bootloader: on the device choose Tools > Bootloader, hold PROG during the 5 s countdown, release ~3 s after the screen goes dark')
+        boot = wait_for(BOOT_PID, 180)
+        if not boot:
+            sys.exit('no bootloader appeared within 3 minutes')
     if not boot:
         app = port_for(APP_PID)
         if not app:
@@ -77,9 +83,7 @@ def main():
         time.sleep(0.3)
         s.reset_input_buffer()
         type_slow(s, "bootloader")
-        print("
->>> HOLD the PROG button NOW and keep holding it (the chip resets in 5 s) <<<
-")
+        print("\n>>> HOLD the PROG button NOW and keep holding it (the chip resets in 5 s) <<<\n")
         time.sleep(0.5)
         try:
             s.close()

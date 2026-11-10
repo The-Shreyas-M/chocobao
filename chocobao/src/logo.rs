@@ -106,3 +106,15 @@ pub fn mini(c: &mut Canvas, x: i32, y: i32, t: u32) {
     c.fill_rect((x - rx - 1).max(0) as usize, base as usize, (2 * rx + 3) as usize, 2, true);
     steam(c, x, y - 1, t, 2);
 }
+
+/// The HOME screen: the finished logo, steaming, plus the hint to open the menu.
+pub fn home_frame(c: &mut Canvas, t: u32) {
+    bun(c, 28, 50, 22, 17, 100);
+    steam(c, 28, 31, t, 5);
+    c.text_big(58, 6, "Choco", 2);
+    c.text_big(58, 26, "Bao", 2);
+    // slow blink on the hint so the screen feels alive
+    if (t / 700) % 4 != 3 {
+        c.text(58, 52, "BACK = menu");
+    }
+}

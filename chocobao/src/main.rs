@@ -6,6 +6,7 @@ mod display;
 mod doom;
 mod games;
 mod logo;
+mod mandel;
 mod oled;
 mod pacman;
 mod rng;

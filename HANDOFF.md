@@ -31,6 +31,7 @@ OK=PB2 (31), UP=PC10 (5), DOWN=PC2 (11), LEFT=PC3 (10), RIGHT=PC9 (6), BACK=PB5 
 - Stability tool: `.venv/Scripts/python.exe tools/watch_diag.py --minutes 60` (kill old watchers with PowerShell `Get-CimInstance Win32_Process | ? CommandLine -like '*watch_diag*' | Stop-Process`, they hold the COM port).
 
 ## 6. Status
+- **v1.2 (repo head) adds Seed words (Utilities, `seed.rs`) and Mandelbrot zoom (Lab, `mandel.rs`); built and committed, NOT flashed. Flash all three images with the next PROG+RESET.** Mandelbrot controls: OK pause, UP/DOWN zoom, LEFT/RIGHT target.
 - **v1.0 flashed and running** (stable 90+ s watched; v0.8 ran 18+ min). **v1.1 (this repo head) is built and committed but NOT flashed**: it adds Pac-Man, neumorphic cards/panels, a passphrase screen layout fix.
 - Never seen on the real screen by me: boot animation, home, icons, help screens, wipes, screensaver, neumorphic look, Doom, Pac-Man, Timer, Random number. Expect layout tweaks from the user's feedback.
 - Freezes/restarts before v0.8 were most likely the unbounded spin in the HAL I2C driver (patched; flashed with loader+xous). Not proven.

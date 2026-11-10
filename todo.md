@@ -28,8 +28,8 @@ Status key: [ ] open, [~] in progress, [x] done. Rewritten 10 Nov 2026 (firmware
 - [ ] Tutorial overlay on first run. Frame-time check with `diag`.
 
 ## Round 3: show off the silicon
-- [ ] **Mandelbrot zoom** (fixed-point on the CPU, progressive render, smooth zoom, dithered palette). Stretch: split rows over BIO cores (BIO has no hardware multiply).
-- [ ] **Seed words with valid BIP-39 checksum** (12/24 words, hardware SHA) in Utilities. TRNG + hash engine, no extra hardware.
+- [x] (built v1.2, unseen on screen, `mandel.rs`, Lab > Mandelbrot) **Mandelbrot zoom** (fixed-point on the CPU, progressive render, smooth zoom, dithered palette). Stretch: split rows over BIO cores (BIO has no hardware multiply).
+- [x] (built v1.2, `seed.rs`, Utilities > Seed words, matches reference vectors; never typed/saved) **Seed words with valid BIP-39 checksum** (12/24 words, hardware SHA) in Utilities. TRNG + hash engine, no extra hardware.
 - [ ] **4-voice chiptune synth** (one BIO core per voice, needs a mixer or 4 pins; or time-multiplex on one pin).
 - [ ] **BIO scope / self-sniffer**: sample our own pins (buttons, buzzer, maybe OLED lines) with a BIO core and draw the waveform. No extra hardware.
 - [ ] **BIO I2C master for the OLED** (take the display off the HAL I2C service; cleanest stability fix).

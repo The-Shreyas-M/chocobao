@@ -107,12 +107,13 @@ static GAME_ITEMS: [Item; 9] = [
     it("Pac-Man", &I_PAC, "Eat the dots, dodge ghosts"),
     it("Magic 8-ball", &I_BALL, "Ask a yes/no question"),
 ];
-static LAB_ITEMS: [Item; 5] = [
+static LAB_ITEMS: [Item; 6] = [
     it("Button test", &I_BUTTON, "Check all 6 buttons"),
     it("Buzzer test", &I_SPEAKER, "Plays a C major scale"),
     it("SOS beeps", &I_SPEAKER, "Morse SOS on the buzzer"),
     it("Sound on/off", &I_SPEAKER, "Mute or unmute"),
     it("Diagnostics", &I_BARS, "Counters for debugging"),
+    it("Mandelbrot", &I_BUN, "Endless fractal zoom"),
 ];
 
 fn items(m: MenuId) -> &'static [Item] {
@@ -144,7 +145,8 @@ const H_TIMER: usize = 6;
 const H_ENT: usize = 7;
 const H_GAME: usize = 8; // + game index (0..=7, 8 = Magic 8-ball)
 const H_SEED: usize = 17;
-const HELP_COUNT: usize = 18;
+const H_MANDEL: usize = 18;
+const HELP_COUNT: usize = 19;
 
 fn help_text(id: usize) -> (&'static str, [&'static str; 4]) {
     match id {
@@ -156,6 +158,7 @@ fn help_text(id: usize) -> (&'static str, [&'static str; 4]) {
         H_STOP => ("Stopwatch", ["OK  start / stop", "UP  reset to zero", "", ""]),
         H_TIMER => ("Timer", ["<>  +/- 10 seconds", "^v  +/- 1 minute", "OK  start / pause", "alarm when it ends"]),
         H_ENT => ("Entropy meter", ["Counts the 1 bits of", "the hardware random", "generator. Healthy = 50%", "bars about equal"]),
+        H_MANDEL => ("Mandelbrot", ["zooms by itself, on-chip", "OK pause   ^v zoom", "<> other place", "integer maths, no float"]),
         H_SEED => ("Seed words", ["<>  12/15/18/21/24", "^v  next / prev page", "OK  new (checksum ok)", "never typed or saved"]),
         x if x == H_GAME => ("Mempool Dodger", ["<> move, hold = glide", "dodge the blocks", "hollow squares = coins", "OK pauses"]),
         x if x == H_GAME + 1 => ("Snake", ["^v<> steer", "eat the hollow squares", "walls and tail hurt", "OK pauses"]),
@@ -225,6 +228,7 @@ enum Screen {
     Timer { set_s: u32, running: bool, end: Instant, left_ms: u32, done: bool },
     Entropy(Entropy),
     Seed { n: usize, idx: Vec<u16>, page: usize },
+    Mandel(Box<crate::mandel::Mandel>),
     Game { idx: usize, g: Box<dyn Game> },
     Ball(Option<usize>),
     ButtonTest,
@@ -245,6 +249,7 @@ fn screen_code(s: &Screen) -> u32 {
         Screen::Timer { .. } => 8,
         Screen::Entropy(_) => 9,
         Screen::Seed { .. } => 11,
+        Screen::Mandel(_) => 12,
         Screen::Ball(_) => 10,
         Screen::ButtonTest => 20,
         Screen::Diag => 21,
@@ -273,6 +278,7 @@ fn parent(s: &Screen) -> Screen {
         Screen::Timer { .. } => Screen::Menu(MenuId::Utilities, 6),
         Screen::Entropy(_) => Screen::Menu(MenuId::Utilities, 7),
         Screen::Seed { .. } => Screen::Menu(MenuId::Utilities, 8),
+        Screen::Mandel(_) => Screen::Menu(MenuId::Lab, 5),
         Screen::Game { idx, .. } => Screen::Menu(MenuId::Games, *idx),
         Screen::Ball(_) => Screen::Menu(MenuId::Games, 8),
         Screen::ButtonTest => Screen::Menu(MenuId::Lab, 0),
@@ -630,6 +636,18 @@ impl App {
                 click = matches!(b, Btn::Up | Btn::Down);
                 rep = matches!(b, Btn::Left | Btn::Right);
             }
+            Screen::Mandel(m) => {
+                match b {
+                    Btn::Ok => m.auto = !m.auto,
+                    Btn::Up => m.zoom(true),
+                    Btn::Down => m.zoom(false),
+                    Btn::Left => m.next_target(-1),
+                    Btn::Right => m.next_target(1),
+                    _ => {}
+                }
+                redraw = true;
+                click = matches!(b, Btn::Left | Btn::Right);
+            }
             Screen::Dice { p, cur } => match b {
                 Btn::Up => {
                     *p = (*p + DICE.len() - 1) % DICE.len();
@@ -868,6 +886,7 @@ impl App {
                 self.toast(if on { "sound ON" } else { "sound OFF" });
             }
             (MenuId::Lab, 4) => self.goto(Screen::Diag),
+            (MenuId::Lab, 5) => self.open(H_MANDEL, Screen::Mandel(Box::new(crate::mandel::Mandel::new()))),
             _ => {}
         }
     }
@@ -1017,6 +1036,17 @@ impl App {
                     self.dirty = true;
                 }
             }
+            Screen::Mandel(m) => {
+                // render a slice of rows (about 15 ms), then once a frame is complete and auto is on, zoom in
+                let changed = m.step_render(Duration::from_millis(15));
+                if m.finished() && m.auto && now.duration_since(self.anim_at) >= Duration::from_millis(150) {
+                    self.anim_at = now;
+                    m.zoom(true);
+                }
+                if changed {
+                    self.dirty = true;
+                }
+            }
             Screen::Diag | Screen::About => {
                 let secs = self.started.elapsed().as_secs();
                 if secs != self.last_secs {
@@ -1160,6 +1190,19 @@ impl App {
                     }
                 }
                 oled.text(4, 55, "OK=new  <>=count");
+            }
+            Screen::Mandel(m) => {
+                for y in 0..crate::mandel::H {
+                    for x in 0..crate::mandel::W {
+                        if m.lit(x, y) {
+                            oled.dot(x as i32, y as i32, true);
+                        }
+                    }
+                }
+                oled.fill_rect(0, 56, 128, 8, false);
+                let z = m.zoom_x100;
+                let zt = if z >= 100_000 { format!("{}k", z / 100_000) } else { format!("{}.{}", z / 100, (z % 100) / 10) };
+                oled.text(0, 56, &format!("{} x{}{}", m.name(), zt, if m.auto { "" } else { " ||" }));
             }
             Screen::Dice { p, cur } => {
                 oled.text(0, 0, "Dice and coin");

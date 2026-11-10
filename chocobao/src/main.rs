@@ -1,7 +1,9 @@
 mod app;
 mod bootmode;
 mod controls;
+mod diag;
 mod display;
+mod doom;
 mod games;
 mod logo;
 mod oled;

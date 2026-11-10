@@ -167,6 +167,7 @@ fn run(tx: Sender<Input>) {
                     b.pressed = true;
                     b.since = Instant::now();
                     log::info!("{} pressed", name);
+                    crate::diag::bump(&crate::diag::BTN_EVENTS);
                     tx.send(Input::Press(*btn)).ok();
                 }
             } else {

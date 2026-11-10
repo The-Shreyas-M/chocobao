@@ -4,7 +4,7 @@
 // tone; an active one will simply sound whenever it is toggled.)
 //
 // How it works: one of the four BIO cores runs a tiny program that toggles the pin with exact timing, so the
-// main CPU does nothing while a note plays. The core's "quantum" clock is set to 100 kHz (10 us per tick); the
+// main CPU does nothing while a note plays. The core's "quantum" clock is set to 500 kHz (2 us per tick); the
 // host sends two words per note: half-period in ticks and number of full periods. When it runs out of work the
 // core waits on its FIFO with the pin low = silence. (The old CPU-toggled versions flooded the system and were
 // removed.)
@@ -26,53 +26,63 @@ use utralib::utra::bio_bdma;
 /// BIO pin number of the buzzer (BIO3 = PB3 = header pin 32).
 const BIO_PIN: u8 = 3;
 /// Tick rate of the tone core (Hz).
-const TICK_HZ: u32 = 100_000;
+const TICK_HZ: u32 = 500_000;
 
 pub const REST: u32 = 0;
 /// (frequency in Hz or REST, duration in ms)
 pub type Note = (u32, u32);
 
-// Notes around C#4 (277 Hz), low and gentle on a small buzzer.
-pub const CS4: u32 = 277;
-pub const DS4: u32 = 311;
-pub const E4: u32 = 330;
-pub const FS4: u32 = 370;
-pub const GS4: u32 = 415;
-pub const AS4: u32 = 466;
-pub const B4: u32 = 494;
+// Equal-tempered notes (A4 = 440 Hz), C5 and up: a small buzzer is much louder and clearer above ~500 Hz.
+pub const G4: u32 = 392;
+pub const C5: u32 = 523;
 pub const CS5: u32 = 554;
+pub const D5: u32 = 587;
 pub const DS5: u32 = 622;
 pub const E5: u32 = 659;
+pub const F5: u32 = 698;
+pub const FS5: u32 = 740;
+pub const G5: u32 = 784;
 pub const GS5: u32 = 831;
+pub const A5: u32 = 880;
+pub const AS5: u32 = 932;
 pub const B5: u32 = 988;
+pub const C6: u32 = 1047;
+pub const D6: u32 = 1175;
+pub const E6: u32 = 1319;
+pub const G6: u32 = 1568;
+pub const B6: u32 = 1976;
 
-pub const CLICK: &[Note] = &[(1200, 12)];
-pub const COIN: &[Note] = &[(E5, 60), (B5, 120)];
-pub const CRASH: &[Note] = &[(E4, 110), (DS4, 110), (CS4, 110), (196, 250)];
-pub const TICK: &[Note] = &[(GS4, 30)];
-pub const HELLO: &[Note] = &[(CS4, 110), (E4, 110), (GS4, 110), (CS5, 220)];
+pub const CLICK: &[Note] = &[(2093, 10)];
+pub const COIN: &[Note] = &[(E6, 60), (B6, 140)];
+pub const CRASH: &[Note] = &[(E5, 110), (D5, 110), (C5, 110), (G4, 280)];
+pub const TICK: &[Note] = &[(G5, 30)];
+pub const HELLO: &[Note] = &[(C5, 110), (E5, 110), (G5, 110), (C6, 260)];
+/// C major scale up and down, one octave
 pub const SCALE: &[Note] = &[
-    (CS4, 180), (DS4, 180), (E4, 180), (FS4, 180), (GS4, 180), (AS4, 180), (B4, 180), (CS5, 360),
+    (C5, 220), (D5, 220), (E5, 220), (F5, 220), (G5, 220), (A5, 220), (B5, 220), (C6, 440),
+    (B5, 220), (A5, 220), (G5, 220), (F5, 220), (E5, 220), (D5, 220), (C5, 440),
 ];
 pub const SOS: &[Note] = &[
-    (GS4, 90), (REST, 90), (GS4, 90), (REST, 90), (GS4, 90), (REST, 250), (GS4, 270), (REST, 90), (GS4, 270),
-    (REST, 90), (GS4, 270), (REST, 250), (GS4, 90), (REST, 90), (GS4, 90), (REST, 90), (GS4, 90),
+    (A5, 90), (REST, 90), (A5, 90), (REST, 90), (A5, 90), (REST, 250), (A5, 270), (REST, 90), (A5, 270),
+    (REST, 90), (A5, 270), (REST, 250), (A5, 90), (REST, 90), (A5, 90), (REST, 90), (A5, 90),
 ];
-/// Each game's looping background tune (notes <= 200 ms so effects can cut in quickly).
+/// Each game's looping background tune (notes <= 300 ms so effects can cut in quickly).
 pub const TUNE_DODGER: &[Note] = &[
-    (CS4, 160), (E4, 160), (GS4, 160), (E4, 160), (CS4, 160), (E4, 160), (GS4, 160), (CS5, 160),
-    (B4, 160), (GS4, 160), (E4, 160), (GS4, 160), (B4, 160), (GS4, 160), (E4, 160), (REST, 160),
+    (C5, 160), (E5, 160), (G5, 160), (E5, 160), (C5, 160), (E5, 160), (G5, 160), (C6, 160),
+    (B5, 160), (G5, 160), (E5, 160), (G5, 160), (B5, 160), (G5, 160), (E5, 160), (REST, 160),
 ];
 pub const TUNE_SNAKE: &[Note] = &[
-    (E4, 200), (REST, 100), (E4, 100), (FS4, 200), (GS4, 200), (REST, 100), (GS4, 100), (FS4, 200),
-    (E4, 200), (DS4, 200), (CS4, 200), (REST, 200),
+    (E5, 200), (REST, 100), (E5, 100), (FS5, 200), (GS5, 200), (REST, 100), (GS5, 100), (FS5, 200),
+    (E5, 200), (DS5, 200), (CS5, 200), (REST, 200),
 ];
-pub const TUNE_PONG: &[Note] = &[(CS4, 120), (REST, 120), (GS4, 120), (REST, 120)];
+pub const TUNE_PONG: &[Note] = &[(C5, 120), (REST, 120), (G5, 120), (REST, 120)];
 pub const TUNE_FLAPPY: &[Note] = &[
-    (GS4, 150), (B4, 150), (CS5, 150), (B4, 150), (GS4, 150), (E4, 150), (GS4, 300), (REST, 150),
+    (G5, 150), (B5, 150), (C6, 150), (B5, 150), (G5, 150), (E5, 150), (G5, 300), (REST, 150),
 ];
-pub const TUNE_MENU: &[Note] = &[
-    (CS4, 200), (REST, 200), (E4, 200), (REST, 200), (GS4, 200), (REST, 200), (E4, 200), (REST, 600),
+/// the famous riff, roughly
+pub const TUNE_DOOM: &[Note] = &[
+    (E5, 110), (E5, 110), (E6, 110), (E5, 110), (E5, 110), (D6, 110), (E5, 110), (E5, 110),
+    (C6, 110), (E5, 110), (E5, 110), (AS5, 110), (E5, 110), (E5, 110), (B5, 110), (C6, 110),
 ];
 
 enum Msg {

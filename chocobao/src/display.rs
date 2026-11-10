@@ -121,16 +121,20 @@ fn thread_main(sh: Arc<Shared>, ready: std::sync::mpsc::Sender<bool>) {
                 let ok = panel.push(&local);
                 let took = now_ms(&sh).saturating_sub(now);
                 sh.busy_since.store(0, Ordering::SeqCst);
+                crate::diag::STUCK_MS.store(0, Ordering::Relaxed);
+                crate::diag::max(&crate::diag::PUSH_MAX_MS, took);
                 last_push = now_ms(&sh);
                 if took > sh.max_ms.load(Ordering::Relaxed) {
                     sh.max_ms.store(took, Ordering::Relaxed);
                 }
                 if ok {
                     sh.pushes.fetch_add(1, Ordering::Relaxed);
+                    crate::diag::bump(&crate::diag::PUSHES);
                     consecutive_fails = 0;
                     shown = seq;
                 } else {
                     sh.fails.fetch_add(1, Ordering::Relaxed);
+                    crate::diag::bump(&crate::diag::FAILS);
                     consecutive_fails += 1;
                     if consecutive_fails >= REINIT_AFTER_FAILS {
                         sh.busy_since.store(now_ms(&sh) + 1, Ordering::SeqCst);

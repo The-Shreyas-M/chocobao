@@ -33,7 +33,7 @@ use crate::logo;
 use crate::sound::{self, Sound};
 
 const TICK_MS: u64 = 10;
-const WATCHDOG_MS: u32 = 4000;
+const WATCHDOG_MS: u32 = 20_000; // only a truly dead display bus should restart the app
 
 #[derive(Clone, Copy, PartialEq)]
 enum MenuId {
@@ -47,7 +47,7 @@ fn items(m: MenuId) -> &'static [&'static str] {
     match m {
         MenuId::Main => &["Passwords", "Dice", "Games", "Tools", "About"],
         MenuId::Passwords => &["Site-rules password", "Type 6 words", "Show 6 words", "Show PIN (6)"],
-        MenuId::Games => &["Mempool Dodger", "Snake", "Pong", "Flappy Bao", "Simon", "Reaction"],
+        MenuId::Games => &["Mempool Dodger", "Snake", "Pong", "Flappy Bao", "Simon", "Reaction", "ChocoDoom"],
         MenuId::Tools => &[
             "Stopwatch",
             "Magic 8-ball",
@@ -138,7 +138,7 @@ struct App {
     status: String,
     started: Instant,
     down: [bool; 6],
-    best: [u32; 6],
+    best: [u32; 8],
     sound_done: bool,
     anim_at: Instant,
     rep_at: Instant,
@@ -173,7 +173,7 @@ fn run(rx: Receiver<Input>) {
         status: String::new(),
         started: Instant::now(),
         down: [false; 6],
-        best: [0; 6],
+        best: [0; 8],
         sound_done: false,
         anim_at: Instant::now(),
         rep_at: Instant::now(),
@@ -181,8 +181,11 @@ fn run(rx: Receiver<Input>) {
         dirty: true,
         last_secs: 0,
     };
+    crate::diag::init();
     let mut next = Instant::now();
     loop {
+        let loop_t0 = Instant::now();
+        crate::diag::bump(&crate::diag::TICKS);
         // drain button events
         let mut gone = false;
         loop {
@@ -213,11 +216,15 @@ fn run(rx: Receiver<Input>) {
             }
         }
         if let Some(d) = &app.display {
-            if d.stuck_ms() > WATCHDOG_MS && app.started.elapsed() > Duration::from_secs(8) {
+            let stuck = d.stuck_ms();
+            crate::diag::STUCK_MS.store(stuck, Ordering::Relaxed);
+            if stuck > WATCHDOG_MS && app.started.elapsed() > Duration::from_secs(8) {
                 log::error!("display bus stuck, restarting");
+                crate::diag::bump(&crate::diag::WD_TRIPS);
                 crate::bootmode::restart();
             }
         }
+        crate::diag::max(&crate::diag::LOOP_MAX_MS, loop_t0.elapsed().as_millis() as u32);
         // fixed-rate schedule
         next += Duration::from_millis(TICK_MS);
         let now = Instant::now();
@@ -238,6 +245,25 @@ fn beeps_for(s: Snd) -> &'static [sound::Note] {
     }
 }
 
+fn screen_code(s: &Screen) -> u32 {
+    match s {
+        Screen::Boot(_) => 0,
+        Screen::Home => 1,
+        Screen::Menu(..) => 2,
+        Screen::Dice(..) => 3,
+        Screen::Show { .. } => 4,
+        Screen::Countdown { .. } => 5,
+        Screen::PwGen { .. } => 6,
+        Screen::Stopwatch { .. } => 7,
+        Screen::Ball(_) => 8,
+        Screen::Entropy(_) => 9,
+        Screen::ButtonTest => 20,
+        Screen::Diag => 21,
+        Screen::About => 22,
+        Screen::Game { idx, .. } => 10 + *idx as u32,
+    }
+}
+
 fn fmt_time(d: Duration) -> String {
     let ms = d.as_millis() as u64;
     format!("{:02}:{:02}.{:02}", ms / 60000, (ms / 1000) % 60, (ms % 1000) / 10)
@@ -245,6 +271,7 @@ fn fmt_time(d: Duration) -> String {
 
 impl App {
     fn goto(&mut self, s: Screen) {
+        crate::diag::SCREEN.store(screen_code(&s), std::sync::atomic::Ordering::Relaxed);
         self.screen = s;
         self.gen = self.gen.wrapping_add(1);
         self.dirty = true;
@@ -254,6 +281,7 @@ impl App {
     fn recover(&mut self) {
         log::error!("recovered from a panic, back to HOME");
         self.panics += 1;
+        crate::diag::bump(&crate::diag::PANICS);
         self.status = "recovered".into();
         self.goto(Screen::Home);
     }
@@ -265,6 +293,7 @@ impl App {
             1 => Some(sound::TUNE_SNAKE),
             2 => Some(sound::TUNE_PONG),
             3 => Some(sound::TUNE_FLAPPY),
+            6 => Some(sound::TUNE_DOOM),
             _ => None,
         };
         self.snd.tune(tune);

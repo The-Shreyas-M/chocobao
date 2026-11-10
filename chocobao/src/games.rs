@@ -38,13 +38,14 @@ pub struct Entry {
     pub make: fn(&Trng) -> Box<dyn Game>,
 }
 
-pub const GAMES: [Entry; 6] = [
+pub const GAMES: [Entry; 7] = [
     Entry { name: "Mempool Dodger", make: |_| Box::new(Dodger::new()) },
     Entry { name: "Snake", make: |t| Box::new(Snake::new(t)) },
     Entry { name: "Pong", make: |t| Box::new(Pong::new(t)) },
     Entry { name: "Flappy Bao", make: |t| Box::new(Flappy::new(t)) },
     Entry { name: "Simon", make: |t| Box::new(Simon::new(t)) },
     Entry { name: "Reaction", make: |t| Box::new(Reaction::new(t)) },
+    Entry { name: "ChocoDoom", make: |t| Box::new(crate::doom::Doom::new(t)) },
 ];
 
 fn game_over_box(c: &mut Canvas, msg: &str) {

@@ -131,16 +131,15 @@ static GAME_ITEMS: [Item; 20] = [
     it(crate::games2::NAMES[10], &crate::games2::ICONS[10], crate::games2::DESCS[10]),
 ];
 static MUSIC_ITEMS: [Item; 3] = [
-    it("Blinding Lights", &I_SPEAKER, "The Weeknd (by ear)"),
-    it("Attention", &I_SPEAKER, "Charlie Puth (by ear)"),
+    it("Blinding Lights", &I_SPEAKER, "The Weeknd"),
+    it("Attention", &I_SPEAKER, "Charlie Puth"),
     it("Chord synth", &I_SPEAKER, "4 voices on one pin"),
 ];
-static LAB_ITEMS: [Item; 6] = [
+static LAB_ITEMS: [Item; 5] = [
     it("Mandelbrot", &I_BUN, "Endless fractal zoom"),
     it("SOS beeps", &I_SPEAKER, "Morse SOS on the buzzer"),
     it("Button scope", &I_BARS, "Waveforms of 6 buttons"),
     it("TRNG health", &I_BARS, "Noise picture and tests"),
-    it("AM beacon", &I_SPEAKER, "Radio carrier in morse"),
     it("Notary", &I_KEY, "Sign events, PC verifies"),
 ];
 static SET_ITEMS: [Item; 8] = [
@@ -968,7 +967,7 @@ impl App {
                         tune = Some(crate::music::TUNES[*idx].notes);
                     }
                 }
-                self.snd.tune(tune);
+                self.snd.tune_fat(tune);
                 self.dirty = true;
             }
             Act::ClockEdit => {
@@ -1057,8 +1056,7 @@ impl App {
             (MenuId::Music, 2) => self.open_tool(crate::tools2::Kind::Synth),
             (MenuId::Lab, 2) => self.open_tool(crate::tools2::Kind::Scope),
             (MenuId::Lab, 3) => self.open_tool(crate::tools2::Kind::Health),
-            (MenuId::Lab, 4) => self.open_tool(crate::tools2::Kind::Beacon),
-            (MenuId::Lab, 5) => self.open_tool(crate::tools2::Kind::Notary),
+            (MenuId::Lab, 4) => self.open_tool(crate::tools2::Kind::Notary),
             (MenuId::Games, i) if i >= 9 && i < 20 => self.open_game2(i - 9),
             (MenuId::Music, 0) | (MenuId::Music, 1) => {
                 self.snd.silence();

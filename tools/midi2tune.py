@@ -89,6 +89,8 @@ def main():
     ap.add_argument('--name', default='TUNE')
     ap.add_argument('--transpose', type=int, default=0)
     ap.add_argument('--bars', help='first-last bar, e.g. 1-16 (assumes 4/4)')
+    ap.add_argument('--speed', type=float, default=1.0, help='tempo multiplier, 1.35 = 35%% faster')
+    ap.add_argument('--max-ms', type=int, default=300, help='split longer notes (the player cuts in between notes)')
     ap.add_argument('--min-hz', type=float, default=400)
     ap.add_argument('--max-hz', type=float, default=2600)
     a = ap.parse_args()
@@ -124,11 +126,18 @@ def main():
             hz *= 2
         while hz > a.max_hz:
             hz /= 2
-        t0 = ticks_to_ms(s, div, tempo_map)
-        t1 = ticks_to_ms(e, div, tempo_map)
+        t0 = ticks_to_ms(s, div, tempo_map) / a.speed
+        t1 = ticks_to_ms(e, div, tempo_map) / a.speed
         if prev_end is not None and t0 - prev_end > 30:
-            out.append((0, round(t0 - prev_end)))
-        out.append((round(hz), max(40, round(t1 - t0))))
+            g = round(t0 - prev_end)
+            while g > a.max_ms:
+                out.append((0, a.max_ms))
+                g -= a.max_ms
+            out.append((0, g))
+        dur = max(40, round(t1 - t0))
+        k = -(-dur // a.max_ms)
+        for q in range(k):
+            out.append((round(hz) if q == k - 1 else f'TIE | {round(hz)}', round(dur / k)))
         prev_end = t1
     print(f'pub const {a.name}: &[Note] = &[')
     line = '   '

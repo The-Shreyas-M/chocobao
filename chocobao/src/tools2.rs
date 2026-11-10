@@ -286,7 +286,7 @@ impl ToolState {
             Kind::Scope => (2, 2),
             Kind::Health => (2, 3),
             Kind::Beacon => (2, 4),
-            Kind::Notary => (2, 5),
+            Kind::Notary => (2, 4),
         }
     }
 

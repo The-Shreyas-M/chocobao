@@ -21,7 +21,7 @@ Status key: [ ] open, [~] in progress, [x] done. Rewritten 10 Nov 2026 (firmware
 - [x] 11 new games (`games2.rs`): Breakout, Block Drop, 2048, Tic-Tac-Toe, Connect 4, Memory Pairs, Whack-a-Mole, Minesweeper (hold OK = flag), Space Shooter, Lunar Lander, Maze Runner. PC smoke-tested only.
 - [x] ChocoDoom round 2: brick walls, floor/ceiling dither, minimap, how-to overlay, 2 levels (OK after a win starts the other level), autofire.
 - [x] Tools (`tools2.rs`): Calculator, Unit converter, Base converter, Metronome, Habit counter, Morse trainer, Text presets (edit the PRESETS list, hold OK types), Flashlight.
-- [x] Music: Chord synth (4 voices time-shared on one pin). Lab: Button scope (CPU sampled), TRNG health, AM beacon (250 kHz carrier keyed in morse, unverified with a radio), Notary.
+- [x] Music: Chord synth (4 voices time-shared on one pin). Lab: Button scope (CPU sampled), TRNG health, Notary.
 - [x] Notary (in-app): Ed25519 key from the TRNG kept in RAM only, each UP/DOWN/LEFT/RIGHT press signs "CHOCONOTARY1|n|ms|event"; hold OK types `msg|sig|pub`; `tools/verify.py` checks it on the PC (pure Python, RFC 8032 vector tested).
 - [x] Settings: Idle time, Invert screen. Savers: 13 eye moods (crying, laughing, bored added), Bao and bar, Surprise me.
 - [ ] NOT done: isolated Notary process + MMU "game reads the key and is killed" demo (needs a second Xous process/service and kernel plumbing); glitch/tamper sensors (the SENSORC registers belong to the loader/kernel and sit next to one-way wipe counters, deliberately not touched); display contrast; custom text input; tunes (still need the MIDI files for `tools/midi2tune.py`); countdown-to-date (the clock has no date); real 4-pin 4-voice synth (needs wiring).
@@ -130,3 +130,4 @@ Status key: [ ] open, [~] in progress, [x] done. Updated 7 Nov 2026.
 - [x] Read-only `audit` and `bootwait check` (bootwait = Enable).
 - [x] Serial flashing proven: `tools/baoflash.py`, 1059 blocks acknowledged, `boot` started the app without PROG.
 - [x] PROCEDURE.md, LEARN.md, ideas.md, NOTES.md written.
+- [x] v2.1.0: tunes converted from the user's MIDI files, fuller buzzer (octave shimmer), AM beacon dropped, BUILD_GUIDE rewritten with PCB labels.

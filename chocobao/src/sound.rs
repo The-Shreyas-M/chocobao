@@ -33,6 +33,8 @@ const TICK_HZ: u32 = 500_000;
 pub const REST: u32 = 0;
 /// (frequency in Hz or REST, duration in ms)
 pub type Note = (u32, u32);
+/// Set on a note's frequency to tie it to the next note (no gap in between); used for long notes split in pieces.
+pub const TIE: u32 = 1 << 31;
 
 // Equal-tempered notes (A4 = 440 Hz), C5 and up: a small buzzer is much louder and clearer above ~500 Hz.
 pub const G4: u32 = 392;
@@ -96,6 +98,8 @@ enum Msg {
     Tune(Option<&'static [Note]>),
 }
 
+static FAT: AtomicBool = AtomicBool::new(false);
+
 #[derive(Clone)]
 pub struct Sound {
     tx: Sender<Msg>,
@@ -132,7 +136,16 @@ impl Sound {
     }
 
     /// Set (or clear) the looping background tune.
-    pub fn tune(&self, t: Option<&'static [Note]>) { self.tx.send(Msg::Tune(t)).ok(); }
+    pub fn tune(&self, t: Option<&'static [Note]>) {
+        FAT.store(false, Ordering::Relaxed);
+        self.tx.send(Msg::Tune(t)).ok();
+    }
+
+    /// Like `tune`, but every note is played as a fast two-voice shimmer (note + octave) for a fuller buzzer sound.
+    pub fn tune_fat(&self, t: Option<&'static [Note]>) {
+        FAT.store(true, Ordering::Relaxed);
+        self.tx.send(Msg::Tune(t)).ok();
+    }
 
     /// Stop the background tune (effects already queued still play).
     pub fn silence(&self) { self.tune(None); }
@@ -280,22 +293,42 @@ fn run(rx: Receiver<Msg>, enabled: Arc<AtomicBool>, status: Arc<Mutex<String>>) 
             }
         }
         let on = enabled.load(Ordering::Relaxed);
+        let mut from_tune = false;
+        let mut same_next = false;
         let note = if let Some(n) = effects.pop_front() {
             Some(n)
         } else if let (Some(t), true) = (tune, on) {
             let n = t[idx % t.len()];
             idx += 1;
+            from_tune = true;
+            same_next = n.0 & TIE != 0; // a piece of a long note tied to the next: no gap
             Some(n)
         } else {
             None
         };
         if let Some((hz, ms)) = note {
-            if hz != REST && on {
+            let hz = hz & !TIE;
+            if hz != REST && on && from_tune && ms >= 60 && FAT.load(Ordering::Relaxed) {
+                // fuller sound: the note and its octave alternate every 12 ms (two voices sharing the pin)
                 if let Some(t) = tone.as_mut() {
-                    t.start(hz, ms);
+                    let (mut left, mut k) = (ms, 0u32);
+                    while left > 0 {
+                        let sl = left.min(12);
+                        t.start(if k % 2 == 0 { hz } else { (hz * 2).min(5000) }, sl);
+                        tt.sleep_ms(sl as usize).ok();
+                        left -= sl;
+                        k += 1;
+                    }
                 }
+                tt.sleep_ms(if same_next { 0 } else { 10 }).ok();
+            } else {
+                if hz != REST && on {
+                    if let Some(t) = tone.as_mut() {
+                        t.start(hz, ms);
+                    }
+                }
+                tt.sleep_ms(ms as usize + if same_next { 0 } else { 10 }).ok(); // 10 ms gap so repeated notes are distinct
             }
-            tt.sleep_ms(ms as usize + 10).ok(); // 10 ms gap so repeated notes are distinct
         } else if tune.is_some() && !on {
             tt.sleep_ms(100).ok();
         }

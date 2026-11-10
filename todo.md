@@ -1,56 +1,64 @@
 # TODO
 
-Status key: [ ] open, [~] in progress, [x] done. Rewritten 10 Nov 2026 (v0.8 state). The older list is kept at the bottom.
+Status key: [ ] open, [~] in progress, [x] done. Rewritten 10 Nov 2026 (firmware v1.1). Older items are kept at the bottom.
 
-## Findings so far (read this first)
-- **v0.8 is stable.** After the I2C patch + fewer wakeups, one run lasted 18+ minutes of normal use (btn events 335, 0 panics, 0 failed OLED pushes). Before v0.8 the board froze/restarted every 0.5-2.5 min. Likely cause: unbounded spin in the HAL I2C driver (patch: `patches/xous-i2c-bounded-spin.patch`). Not proven, but the symptom is gone.
-- One app-loop stall of 2.4 s and an OLED push of 377 ms were seen once (`loopmax`/`pushmax` in `diag_log.txt`): find out what it was (probably typing a long password over USB, or ChocoDoom). Keep `tools/watch_diag.py` as the regression test.
-- Flash flow: **hold PROG, tap RESET, release PROG**, then `tools/flash_auto.py` (it waits for the bootloader and flashes; add loader.uf2 + xous.uf2 only when the kernel/HAL changed).
+## Findings so far (read first)
+- v0.8+ is stable: 18+ min of use without a freeze (before: every 0.5-2.5 min). Cause was most likely the unbounded spin in the HAL I2C driver (patch: `patches/xous-i2c-bounded-spin.patch`). Keep `tools/watch_diag.py` as the regression test after every big change (`diag_log.txt`, git-ignored).
+- One app-loop stall of 2.4 s and an OLED push of 377 ms were seen: probably typing a long password over USB or a full-screen wipe. Watch `loopmax`/`pushmax`.
+- Flash: hold PROG, tap RESET, release PROG, then `tools/flash_auto.py loader.uf2 xous.uf2 apps.uf2` (always all three after a rebuild). `bootwait` decision still open (hands-free flashing).
 
-## Round 1: UI/UX overhaul (requested 10 Nov)
-- [ ] Restructure the main menu: **Utilities**, **Games**, **Lab** (silicon showcase), **About**. (Dice, password maker and stopwatch are utilities, not games.)
-- [ ] **Utilities:** Password maker, Passphrase (6 words), PIN, Dice and coin, Random number, Stopwatch, Countdown timer, Entropy meter, Button test, Buzzer test, more (checksum/base converter, Morse beeper, calculator?).
-- [ ] **Games:** Mempool Dodger, Snake, Pong, Flappy Bao, Simon, Reaction, ChocoDoom, **Magic 8-ball** (moved here).
-- [ ] **Password maker** (rename from "Site-rules"): a clear screen with arrows. Show "^ v TYPE" (change password type), "< > LEN" (length), "OK new", "hold OK type it". Bring back an explicit **Type password** action. Many more types: everything, letters+digits, safe symbols, letters only, lowercase+digits, uppercase+digits, digits (PIN), readable (no 0/O/1/l), hex, base32, base58, passphrase styles, "no symbols but one digit", etc.
-- [ ] **Dice screen:** label "DICE TYPE" with up/down arrow glyphs; show the result big and a roll history.
-- [ ] **Remove "Bootloader" from Tools** (and the console command) since flashing is PROG+RESET. Update flash_auto.py/README/HANDOFF.
-- [ ] **Icons + help:** every app gets an 8x8/16x16 icon in the menu and a one-screen "how to use" (shown on first open, `?`/hold OK to show again): which buttons do what, drawn with arrow glyphs.
-- [ ] Screen transitions (slide/wipe) and a cleaner, consistent header/footer layout; scroll indicators; selected-item highlight.
-- [ ] Better animations: richer boot logo, animated home screen (steam, blinking face, idle tricks), small per-app intro animations.
+## Done (needs the user's eyes on the real screen)
+- [x] Menu: Utilities / Games / Lab / About with icons and one-line descriptions; first-open help screens; wipe transitions.
+- [x] Utilities: Password maker (17 types: UP/DOWN type, LEFT/RIGHT length, OK new, hold OK type), Passphrase, PIN maker, Dice and coin (10 dice), Random number, Stopwatch, Timer with alarm, Entropy meter.
+- [x] Games (9): Mempool Dodger, Snake, Pong, Flappy Bao, Simon, Reaction, ChocoDoom, **Pac-Man**, Magic 8-ball. BACK once pauses, BACK twice quits. Tunes per game.
+- [x] Lab: Button test, Buzzer test, SOS, Sound on/off, Diagnostics. Bootloader item removed.
+- [x] Boot/Home: chocolate keeps pouring over a bao (no steam). Screensaver after 45 s idle (moving bun, dark after 2.5 min more); any button wakes and resumes, games paused.
+- [x] Neumorphic look started: raised cards for menu rows and password panels, sunken panel for the secret. Passphrase wraps by words.
+- [x] BUILD_GUIDE.md rewritten (all connections). HANDOFF.md rewritten.
+
+## Round 1b: polish after seeing it on the real screen
+- [ ] Flash v1.1 and collect feedback on: boot animation, home, icons, help screens, wipe, screensaver, neumorphic panels, Pac-Man speed, Doom.
+- [ ] Neumorphic style everywhere (Dice, Random, Timer, Stopwatch, Entropy, Lab screens); consistent header/footer; nicer scroll indicator.
+- [ ] Richer per-app intro animations; animated menu icons for the selected row.
+- [ ] Make "hold OK to type" visible (progress bar while holding).
 
 ## Round 2: ChocoDoom looks 3D and readable
-- [ ] Textured walls (brick/stone pattern that scales with distance), clear floor and ceiling (dither gradient), distance fog, wall-edge lines.
-- [ ] Better enemy sprites (head/eyes/arms, walk animation, hit flash), pickups (health/ammo), a door or two, minimap corner, weapon bob and muzzle flash, damage vignette.
-- [ ] Tutorial overlay the first time: "UP/DOWN walk, LEFT/RIGHT turn, OK shoot" with arrow glyphs. Maybe a second level.
-- [ ] Performance check (frame time via `diag`), keep the display bus calm.
+- [ ] Textured walls (brick/stone that scales), floor and ceiling (dither gradient), distance fog, edge lines.
+- [ ] Better enemies (head/eyes/arms, walk animation, hit flash), pickups, doors, minimap, weapon bob, damage vignette, level 2.
+- [ ] Tutorial overlay on first run. Frame-time check with `diag`.
 
-## Round 3: show off the silicon (the four BIO cores and friends)
-- [ ] **Mandelbrot zoom** (fixed-point on the CPU first: 128x64, progressive render, smooth zoom animation, palette via dithering). Stretch: split the image over BIO cores (note: BIO cores have no hardware multiply, so use shift-add or lookup tables).
-- [ ] **4-voice chiptune synth**: one BIO core per voice (needs 4 pins or a mixer); play tunes, keyboard mode with the buttons.
-- [ ] **BIO logic analyser / signal scope** screen; **IR remote learn + replay** (bio/sw/nec_rx exists); **WS2812 LED effects**.
-- [ ] **BIO I2C master for the OLED** (take the display off the HAL I2C service completely; cleanest fix for any residual bus trouble and a good demo).
-- [ ] Hardware crypto showcase: SHA/AES speed benchmark vs software, Ed25519 sign/verify timing (feeds the Notary demo).
-- [ ] TRNG health screen (use the Xous TRNG health tests) and a visual randomness display.
-- [ ] Look for other chip features worth a demo: glitch sensors (read-only), RTC, temperature sensor (if exposed), USB speed, ADC pins (PWM/ADC columns in the pinout).
+## Round 3: show off the silicon
+- [ ] **Mandelbrot zoom** (fixed-point on the CPU, progressive render, smooth zoom, dithered palette). Stretch: split rows over BIO cores (BIO has no hardware multiply).
+- [ ] **Seed words with valid BIP-39 checksum** (12/24 words, hardware SHA) in Utilities. TRNG + hash engine, no extra hardware.
+- [ ] **4-voice chiptune synth** (one BIO core per voice, needs a mixer or 4 pins; or time-multiplex on one pin).
+- [ ] **BIO scope / self-sniffer**: sample our own pins (buttons, buzzer, maybe OLED lines) with a BIO core and draw the waveform. No extra hardware.
+- [ ] **BIO I2C master for the OLED** (take the display off the HAL I2C service; cleanest stability fix).
+- [ ] Crypto benchmarks (SHA/AES/Ed25519 timing), TRNG health screen (Xous TRNG health tests).
+- [ ] Skipped (needs hardware we don't have): IR replay, WS2812 effects, ESP32 sensor node.
+
+## Ideas from the pasted project list (simple words)
+- [ ] Seed/dice generator: already mostly done; add checksum seeds (above).
+- [ ] Canary / dead-man timer: a countdown that must be reset with a button pattern; RAM only, shows an alert when it expires. **Never wipe the chip** (`self_destruct` is real and permanent).
+- [ ] TOTP vault: needs the time (no battery clock; enter it by hand) and a saved secret (ReRAM write only on an explicit "save"). Medium effort, only if time allows.
+- [ ] Logic sniffer: only as a self-sniffer demo (above).
 
 ## Round 4: hackathon deliverables (see STRATEGY.md)
-- [ ] Notary: BIO event capture, Ed25519 signing in an isolated process, PC `verify.py`, MMU "game tries to read the key" demo.
-- [ ] README with reproduction steps, protocol spec, 2-minute video, write-up with the limits spelled out, licence (suggest Apache-2.0). No new features after 12 Dec.
+- [ ] Notary: BIO event capture, Ed25519 signing in an isolated process, PC `verify.py`, MMU "game tries to read the key" demo. Event source = a button / piezo, no ESP32.
+- [ ] README with reproduction steps, protocol spec, 2-minute video, write-up with limits spelled out, licence (suggest Apache-2.0). No new features after 12 Dec.
 
 ## Hardware notes
-- [ ] Buzzer: BIO tone on PB3 (pin 32) works (user heard it); keep the 330 ohm in series, no filter capacitor across the buzzer (it would cut the tones).
-- [ ] 10 uF (+ 2.2 uF) across 3V3 and GND near the OLED as decoupling (recommended, optional now that v0.8 is stable).
-- [ ] Speaker later: needs an amplifier or transistor stage; never drive an 8 ohm speaker from a pin.
+- [ ] Buzzer is wired + to PB3 (pin 32) through 330 ohm and - to GND (works). Loud option: - to PB1 (pin 29), remove the resistor (piezo disc only).
+- [ ] 10 uF across 3V3/GND not fitted (optional, display is fine without).
+- [ ] Never drive an 8 ohm speaker from a pin.
 
 ## Housekeeping
-- [ ] Update README.md and HANDOFF.md for v0.8+ (menus, button map, safe-mode switches: hold BACK at boot = no display/sound, hold DOWN = no sound; flash flow).
-- [ ] Re-run `tools/watch_diag.py` for 30+ minutes after every big change; keep `diag_log.txt` out of git.
+- [ ] Update README.md (button map, menus, flash flow, safe mode) and keep HANDOFF.md / BUILD_GUIDE.md current after every change.
 - [ ] Possibly report upstream: unbounded spin in `i2c_write_async`/`i2c_read_async`; console burst bug; Dvorak keymap issue (not posted anywhere).
+- [ ] Decide on `bootwait` (see HANDOFF.md section 5).
 
 ---
 
 # Older items (7 Nov, partly obsolete)
-
 Status key: [ ] open, [~] in progress, [x] done. Updated 7 Nov 2026.
 
 ## Flashing and tooling (current focus)

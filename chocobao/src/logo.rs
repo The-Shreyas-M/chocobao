@@ -122,12 +122,109 @@ pub fn boot_frame(c: &mut Canvas, t: u32) {
     }
 }
 
-/// The HOME screen: the same pool, calm and gently moving, plus the hint to open the menu.
+/// How far the chocolate hangs down at horizontal offset `dx`: an uneven lower edge with a few long drips.
+fn drip(dx: i32) -> i32 {
+    match (dx * 7 + 31).rem_euclid(11) {
+        0 | 1 => 5,
+        2 => 2,
+        3 | 4 => 3,
+        5 => 1,
+        6 | 7 => 2,
+        8 => 6,
+        _ => 2,
+    }
+}
+
+fn cosn(a: i32) -> i32 { sn(a + 64) }
+
+/// The HOME screen: a bao spinning on the turntable of a little microwave, melted chocolate running over it and a
+/// chocolate bar beside it. Mostly dark: only outlines and small shapes are lit.
 pub fn home_frame(c: &mut Canvas, t: u32) {
-    liquid(c, t, LEVEL_END, None);
-    stars(c, t);
-    xor_text(c, 16, 14, "ChocoBao", 2);
+    // --- microwave body, window, control panel
+    c.rect(0, 2, 68, 60);
+    c.rect(3, 5, 42, 54);
+    c.rect(48, 6, 17, 11);
+    let left = 59 - (t / 1000) % 60; // countdown on the display, like cooking time
+    c.text(52, 8, &format!("{:02}", left));
+    for k in 0..3usize {
+        c.rect(51, 22 + 9 * k, 11, 6);
+    }
+    // timer knob with a pointer that turns
+    let ka = (t / 30) as i32;
+    for dx in -4..=4i32 {
+        let h = Canvas::dome_h(4, 4, dx);
+        c.dot(56 + dx, 52 - h, true);
+        c.dot(56 + dx, 52 + h, true);
+    }
+    c.line(56, 52, 56 + cosn(ka) * 3 / 64, 52 + sn(ka) * 3 / 64);
+
+    // --- turntable plate (ellipse) with a marker that circles with the plate
+    let (cx, pcy) = (24i32, 51i32);
+    for dx in -17..=17i32 {
+        let h = Canvas::dome_h(17, 4, dx);
+        c.dot(cx + dx, pcy - h, true);
+        c.dot(cx + dx, pcy + h, true);
+    }
+    let a = (t / 9) as i32;
+    let (mx, my) = (cx + 17 * cosn(a) / 64, pcy + 4 * sn(a) / 64);
+    c.fill_rect((mx - 1).max(0) as usize, (my - 1).max(0) as usize, 2, 2, true);
+
+    // --- the bao: it turns, so its visible width breathes and the pleats slide
+    let base = 49i32;
+    let ry = 14i32;
+    let rx = 8 + 7 * cosn(a).abs() / 64;
+    for dx in -rx..=rx {
+        let h = Canvas::dome_h(rx, ry, dx);
+        for y in (base - h)..base {
+            c.dot(cx + dx, y, true);
+        }
+    }
+    for k in [-1i32, 1] {
+        let px = cx + k * rx * cosn(a) / 64 / 2 + (k * rx / 3);
+        c.line_set(px, base - ry + 3, px + k * 2, base - 1, false);
+    }
+    // chocolate melting over the top, it keeps flowing
+    for dx in -rx..=rx {
+        let h = Canvas::dome_h(rx, ry, dx);
+        let surface = base - h;
+        let flow = ((t / 130 + dx.rem_euclid(5) as u32) % 4) as i32;
+        let reach = ry / 3 + drip(dx) + flow;
+        for y in (surface + 1)..(surface + 1 + reach).min(base - 1) {
+            c.dot(cx + dx, y, false);
+        }
+    }
+    c.dot(cx - rx / 2, base - ry + 3, true); // glossy shine
+    c.dot(cx - rx / 2 + 1, base - ry + 4, true);
+    // heat shimmer rising from the bun (it is baking)
+    for k in 0..3i32 {
+        for j in 0..3i32 {
+            let rise = ((t / 70) as i32 + j * 6 + k * 5) % 18;
+            let y = base - ry - 2 - rise;
+            if y > 8 {
+                c.dot(cx - 9 + k * 9 + sn(rise * 24 + k * 50) / 40, y, true);
+            }
+        }
+    }
+
+    // --- title, chocolate bar, hint
+    c.text(76, 4, "ChocoBao");
+    c.rect(77, 16, 32, 3); // foil strip
+    for r in 0..3usize {
+        for q in 0..3usize {
+            if r == 2 && q == 2 {
+                continue; // the broken-off corner: that piece is the melted chocolate
+            }
+            let (x, y) = (77 + q * 11, 20 + r * 9);
+            c.rect(x, y, 10, 8);
+            c.fill_rect(x + 2, y + 2, 5, 1, true); // bevel highlight
+            c.fill_rect(x + 2, y + 2, 1, 3, true);
+        }
+    }
+    for q in 0..3i32 {
+        let len = ((t / 160) as i32 + q * 4) % 9;
+        c.fill_rect((82 + q * 11) as usize, 47, 1, len.max(1) as usize, true); // melting drips under the bar
+    }
     if (t / 700) % 4 != 3 {
-        xor_text(c, 31, 54, "BACK = menu", 1);
+        c.text(74, 55, "BACK=menu");
     }
 }

@@ -61,6 +61,7 @@ const I_BALL: [u8; 8] = [0x3C, 0x7E, 0xE7, 0xDB, 0xE7, 0xDB, 0x66, 0x3C];
 const I_BUTTON: [u8; 8] = [0x3C, 0x42, 0x99, 0x99, 0x81, 0x42, 0x3C, 0x00];
 const I_BUN: [u8; 8] = [0x18, 0x3C, 0x7E, 0xFF, 0xFF, 0xFF, 0x7E, 0xFF];
 const I_PAC: [u8; 8] = [0x3C, 0x7E, 0xF8, 0xF0, 0xF8, 0x7E, 0x3C, 0x00];
+const I_GEAR: [u8; 8] = [0x10, 0x92, 0x7C, 0xC6, 0xC6, 0x7C, 0x92, 0x10];
 const I_SPEAKER: [u8; 8] = [0x08, 0x18, 0xF8, 0xF8, 0xF8, 0x18, 0x08, 0x00];
 
 #[derive(Clone, Copy, PartialEq)]
@@ -68,7 +69,9 @@ enum MenuId {
     Main,
     Utilities,
     Games,
+    Music,
     Lab,
+    Settings,
 }
 
 struct Item {
@@ -79,13 +82,14 @@ struct Item {
 
 const fn it(label: &'static str, icon: &'static [u8; 8], desc: &'static str) -> Item { Item { label, icon, desc } }
 
-static MAIN_ITEMS: [Item; 4] = [
-    it("Utilities", &I_TOOLBOX, "Passwords, dice, timers"),
+static MAIN_ITEMS: [Item; 5] = [
+    it("Tools", &I_TOOLBOX, "Passwords, clock, timers"),
     it("Games", &I_GAMEPAD, "9 games incl. Pac-Man"),
-    it("Lab", &I_FLASK, "Tests and experiments"),
-    it("About", &I_INFO, "Version and chip facts"),
+    it("Music", &I_SPEAKER, "Tunes and a piano"),
+    it("Lab", &I_FLASK, "Experiments"),
+    it("Settings", &I_GEAR, "Saver, sound, tests, about"),
 ];
-static UTIL_ITEMS: [Item; 9] = [
+static UTIL_ITEMS: [Item; 10] = [
     it("Password maker", &I_KEY, "Rules for any website"),
     it("Passphrase", &I_WORDS, "Random words, 11 bits each"),
     it("PIN maker", &I_PIN, "Random digits"),
@@ -95,6 +99,7 @@ static UTIL_ITEMS: [Item; 9] = [
     it("Timer", &I_HOURGLASS, "Countdown with alarm"),
     it("Entropy meter", &I_BARS, "Live check of the TRNG"),
     it("Seed words", &I_WORDS, "Valid BIP-39, 12-24 words"),
+    it("Clock", &I_STOPWATCH, "A watch you set by hand"),
 ];
 static GAME_ITEMS: [Item; 9] = [
     it("Mempool Dodger", &I_DODGER, "Dodge blocks, grab coins"),
@@ -107,13 +112,22 @@ static GAME_ITEMS: [Item; 9] = [
     it("Pac-Man", &I_PAC, "Eat the dots, dodge ghosts"),
     it("Magic 8-ball", &I_BALL, "Ask a yes/no question"),
 ];
-static LAB_ITEMS: [Item; 6] = [
-    it("Button test", &I_BUTTON, "Check all 6 buttons"),
-    it("Buzzer test", &I_SPEAKER, "Plays a C major scale"),
-    it("SOS beeps", &I_SPEAKER, "Morse SOS on the buzzer"),
-    it("Sound on/off", &I_SPEAKER, "Mute or unmute"),
-    it("Diagnostics", &I_BARS, "Counters for debugging"),
+static MUSIC_ITEMS: [Item; 3] = [
+    it("Blinding Lights", &I_SPEAKER, "The Weeknd (by ear)"),
+    it("Attention", &I_SPEAKER, "Charlie Puth (by ear)"),
+    it("Piano", &I_SPEAKER, "Play notes with buttons"),
+];
+static LAB_ITEMS: [Item; 2] = [
     it("Mandelbrot", &I_BUN, "Endless fractal zoom"),
+    it("SOS beeps", &I_SPEAKER, "Morse SOS on the buzzer"),
+];
+static SET_ITEMS: [Item; 6] = [
+    it("Screensaver", &I_BUN, "Pick what shows when idle"),
+    it("Sound on/off", &I_SPEAKER, "Mute or unmute"),
+    it("Buzzer test", &I_SPEAKER, "Plays a C major scale"),
+    it("Button test", &I_BUTTON, "Check all 6 buttons"),
+    it("Diagnostics", &I_BARS, "Counters for debugging"),
+    it("About", &I_INFO, "Version and chip facts"),
 ];
 
 fn items(m: MenuId) -> &'static [Item] {
@@ -121,16 +135,20 @@ fn items(m: MenuId) -> &'static [Item] {
         MenuId::Main => &MAIN_ITEMS,
         MenuId::Utilities => &UTIL_ITEMS,
         MenuId::Games => &GAME_ITEMS,
+        MenuId::Music => &MUSIC_ITEMS,
         MenuId::Lab => &LAB_ITEMS,
+        MenuId::Settings => &SET_ITEMS,
     }
 }
 
 fn menu_title(m: MenuId) -> &'static str {
     match m {
         MenuId::Main => "ChocoBao",
-        MenuId::Utilities => "Utilities",
+        MenuId::Utilities => "Tools",
         MenuId::Games => "Games",
+        MenuId::Music => "Music",
         MenuId::Lab => "Lab",
+        MenuId::Settings => "Settings",
     }
 }
 
@@ -146,7 +164,10 @@ const H_ENT: usize = 7;
 const H_GAME: usize = 8; // + game index (0..=7, 8 = Magic 8-ball)
 const H_SEED: usize = 17;
 const H_MANDEL: usize = 18;
-const HELP_COUNT: usize = 19;
+const H_CLOCK: usize = 19;
+const H_PIANO: usize = 20;
+const H_PLAYER: usize = 21;
+const HELP_COUNT: usize = 22;
 
 fn help_text(id: usize) -> (&'static str, [&'static str; 4]) {
     match id {
@@ -158,6 +179,9 @@ fn help_text(id: usize) -> (&'static str, [&'static str; 4]) {
         H_STOP => ("Stopwatch", ["OK  start / stop", "UP  reset to zero", "", ""]),
         H_TIMER => ("Timer", ["<>  +/- 10 seconds", "^v  +/- 1 minute", "OK  start / pause", "alarm when it ends"]),
         H_ENT => ("Entropy meter", ["Counts the 1 bits of", "the hardware random", "generator. Healthy = 50%", "bars about equal"]),
+        H_CLOCK => ("Clock", ["no battery clock, so set", "it once after power-up", "OK = set / done", "^v hours   <> minutes"]),
+        H_PIANO => ("Piano", ["LEFT UP RIGHT DOWN OK", "play C E G A C", "one note per press", "BACK exits"]),
+        H_PLAYER => ("Music player", ["OK = play / stop", "plays on the buzzer", "tunes were written by", "ear, so notes may differ"]),
         H_MANDEL => ("Mandelbrot", ["zooms by itself, on-chip", "OK pause   ^v zoom", "<> other place", "integer maths, no float"]),
         H_SEED => ("Seed words", ["<>  12/15/18/21/24", "^v  next / prev page", "OK  new (checksum ok)", "never typed or saved"]),
         x if x == H_GAME => ("Mempool Dodger", ["<> move, hold = glide", "dodge the blocks", "hollow squares = coins", "OK pauses"]),
@@ -229,6 +253,10 @@ enum Screen {
     Entropy(Entropy),
     Seed { n: usize, idx: Vec<u16>, page: usize },
     Mandel(Box<crate::mandel::Mandel>),
+    Clock { edit: bool },
+    Player { idx: usize, playing: bool },
+    Piano { key: Option<usize>, at: Instant },
+    SaverPick,
     Game { idx: usize, g: Box<dyn Game> },
     Ball(Option<usize>),
     ButtonTest,
@@ -250,6 +278,10 @@ fn screen_code(s: &Screen) -> u32 {
         Screen::Entropy(_) => 9,
         Screen::Seed { .. } => 11,
         Screen::Mandel(_) => 12,
+        Screen::Clock { .. } => 13,
+        Screen::Player { .. } => 14,
+        Screen::Piano { .. } => 15,
+        Screen::SaverPick => 16,
         Screen::Ball(_) => 10,
         Screen::ButtonTest => 20,
         Screen::Diag => 21,
@@ -266,7 +298,9 @@ fn parent(s: &Screen) -> Screen {
         Screen::Menu(MenuId::Main, _) => Screen::Home,
         Screen::Menu(MenuId::Utilities, _) => Screen::Menu(MenuId::Main, 0),
         Screen::Menu(MenuId::Games, _) => Screen::Menu(MenuId::Main, 1),
-        Screen::Menu(MenuId::Lab, _) => Screen::Menu(MenuId::Main, 2),
+        Screen::Menu(MenuId::Music, _) => Screen::Menu(MenuId::Main, 2),
+        Screen::Menu(MenuId::Lab, _) => Screen::Menu(MenuId::Main, 3),
+        Screen::Menu(MenuId::Settings, _) => Screen::Menu(MenuId::Main, 4),
         Screen::Help { then, .. } => match then {
             Then::Game(i) => Screen::Menu(MenuId::Games, *i),
             Then::Open(b) => parent(b),
@@ -278,12 +312,16 @@ fn parent(s: &Screen) -> Screen {
         Screen::Timer { .. } => Screen::Menu(MenuId::Utilities, 6),
         Screen::Entropy(_) => Screen::Menu(MenuId::Utilities, 7),
         Screen::Seed { .. } => Screen::Menu(MenuId::Utilities, 8),
-        Screen::Mandel(_) => Screen::Menu(MenuId::Lab, 5),
+        Screen::Mandel(_) => Screen::Menu(MenuId::Lab, 0),
+        Screen::Clock { .. } => Screen::Menu(MenuId::Utilities, 9),
+        Screen::Player { idx, .. } => Screen::Menu(MenuId::Music, *idx),
+        Screen::Piano { .. } => Screen::Menu(MenuId::Music, 2),
+        Screen::SaverPick => Screen::Menu(MenuId::Settings, 0),
         Screen::Game { idx, .. } => Screen::Menu(MenuId::Games, *idx),
         Screen::Ball(_) => Screen::Menu(MenuId::Games, 8),
-        Screen::ButtonTest => Screen::Menu(MenuId::Lab, 0),
-        Screen::Diag => Screen::Menu(MenuId::Lab, 4),
-        Screen::About => Screen::Menu(MenuId::Main, 3),
+        Screen::ButtonTest => Screen::Menu(MenuId::Settings, 3),
+        Screen::Diag => Screen::Menu(MenuId::Settings, 4),
+        Screen::About => Screen::Menu(MenuId::Settings, 5),
     }
 }
 
@@ -337,6 +375,8 @@ struct App {
     rep_at: Instant,
     last_input: Instant,
     saver: Option<Instant>,
+    saver_kind: usize,
+    clock: (u32, Instant),
     panics: u32,
     dirty: bool,
     last_secs: u64,
@@ -390,6 +430,8 @@ fn run(rx: Receiver<Input>) {
         rep_at: Instant::now(),
         last_input: Instant::now(),
         saver: None,
+        saver_kind: 0,
+        clock: (12 * 3600, Instant::now()),
         panics: 0,
         dirty: true,
         last_secs: 0,
@@ -648,6 +690,51 @@ impl App {
                 redraw = true;
                 click = matches!(b, Btn::Left | Btn::Right);
             }
+            Screen::Clock { edit } => {
+                if *edit {
+                    let day = 24 * 3600;
+                    let now_s = (self.clock.0 + self.clock.1.elapsed().as_secs() as u32) % day;
+                    let d: i64 = match b {
+                        Btn::Up => 3600,
+                        Btn::Down => -3600,
+                        Btn::Right => 60,
+                        Btn::Left => -60,
+                        _ => 0,
+                    };
+                    if d != 0 {
+                        let v = (now_s as i64 + d).rem_euclid(day as i64) as u32;
+                        self.clock = (v, Instant::now());
+                        redraw = true;
+                        click = true;
+                    }
+                }
+            }
+            Screen::Piano { key, at } => {
+                let k = match b {
+                    Btn::Left => Some(0),
+                    Btn::Up => Some(1),
+                    Btn::Right => Some(2),
+                    Btn::Down => Some(3),
+                    Btn::Ok => Some(4),
+                    _ => None,
+                };
+                if let Some(k) = k {
+                    *key = Some(k);
+                    *at = Instant::now();
+                    self.snd.play(&[(crate::music::KEYS[k].1, 220)]);
+                    redraw = true;
+                }
+            }
+            Screen::SaverPick => {
+                let n = crate::saver::COUNT;
+                match b {
+                    Btn::Up | Btn::Left => self.saver_kind = (self.saver_kind + n - 1) % n,
+                    Btn::Down | Btn::Right => self.saver_kind = (self.saver_kind + 1) % n,
+                    _ => {}
+                }
+                redraw = true;
+                click = true;
+            }
             Screen::Dice { p, cur } => match b {
                 Btn::Up => {
                     *p = (*p + DICE.len() - 1) % DICE.len();
@@ -773,6 +860,8 @@ impl App {
             None,
             Select(MenuId, usize),
             PwOk(bool),
+            PlayerToggle,
+            ClockEdit,
             Roll,
             Draw,
             Shake,
@@ -780,6 +869,8 @@ impl App {
         let act = match &self.screen {
             Screen::Menu(m, sel) => Act::Select(*m, *sel),
             Screen::PwGen { .. } => Act::PwOk(held_ms >= 800),
+            Screen::Player { .. } => Act::PlayerToggle,
+            Screen::Clock { .. } => Act::ClockEdit,
             Screen::Dice { .. } => Act::Roll,
             Screen::Rand { .. } => Act::Draw,
             Screen::Ball(_) => Act::Shake,
@@ -804,6 +895,24 @@ impl App {
                 } else {
                     self.snd.play(sound::CLICK);
                 }
+                self.dirty = true;
+            }
+            Act::PlayerToggle => {
+                let mut tune = None;
+                if let Screen::Player { idx, playing } = &mut self.screen {
+                    *playing = !*playing;
+                    if *playing {
+                        tune = Some(crate::music::TUNES[*idx].notes);
+                    }
+                }
+                self.snd.tune(tune);
+                self.dirty = true;
+            }
+            Act::ClockEdit => {
+                if let Screen::Clock { edit } = &mut self.screen {
+                    *edit = !*edit;
+                }
+                self.snd.play(sound::CLICK);
                 self.dirty = true;
             }
             Act::Roll => self.roll(),
@@ -834,8 +943,9 @@ impl App {
         match (m, sel) {
             (MenuId::Main, 0) => self.goto(Screen::Menu(MenuId::Utilities, 0)),
             (MenuId::Main, 1) => self.goto(Screen::Menu(MenuId::Games, 0)),
-            (MenuId::Main, 2) => self.goto(Screen::Menu(MenuId::Lab, 0)),
-            (MenuId::Main, 3) => self.goto(Screen::About),
+            (MenuId::Main, 2) => self.goto(Screen::Menu(MenuId::Music, 0)),
+            (MenuId::Main, 3) => self.goto(Screen::Menu(MenuId::Lab, 0)),
+            (MenuId::Main, 4) => self.goto(Screen::Menu(MenuId::Settings, 0)),
             (MenuId::Utilities, 0) => {
                 let prof = 0;
                 let len = rng::PROFILES[prof].default_len;
@@ -872,21 +982,29 @@ impl App {
             }
             (MenuId::Games, i) if i < GAMES.len() => self.open_game(i),
             (MenuId::Games, 8) => self.open(H_GAME + 8, Screen::Ball(None)),
-            (MenuId::Lab, 0) => self.goto(Screen::ButtonTest),
-            (MenuId::Lab, 1) => {
-                self.snd.play(sound::SCALE);
-                self.toast("playing a scale");
+            (MenuId::Utilities, 9) => self.open(H_CLOCK, Screen::Clock { edit: false }),
+            (MenuId::Music, 0) | (MenuId::Music, 1) => {
+                self.snd.silence();
+                self.open(H_PLAYER, Screen::Player { idx: sel, playing: false })
             }
-            (MenuId::Lab, 2) => {
+            (MenuId::Music, 2) => self.open(H_PIANO, Screen::Piano { key: None, at: Instant::now() }),
+            (MenuId::Lab, 0) => self.open(H_MANDEL, Screen::Mandel(Box::new(crate::mandel::Mandel::new()))),
+            (MenuId::Lab, 1) => {
                 self.snd.play(sound::SOS);
                 self.toast("... --- ...");
             }
-            (MenuId::Lab, 3) => {
+            (MenuId::Settings, 0) => self.goto(Screen::SaverPick),
+            (MenuId::Settings, 1) => {
                 let on = self.snd.toggle();
                 self.toast(if on { "sound ON" } else { "sound OFF" });
             }
-            (MenuId::Lab, 4) => self.goto(Screen::Diag),
-            (MenuId::Lab, 5) => self.open(H_MANDEL, Screen::Mandel(Box::new(crate::mandel::Mandel::new()))),
+            (MenuId::Settings, 2) => {
+                self.snd.play(sound::SCALE);
+                self.toast("playing a scale");
+            }
+            (MenuId::Settings, 3) => self.goto(Screen::ButtonTest),
+            (MenuId::Settings, 4) => self.goto(Screen::Diag),
+            (MenuId::Settings, 5) => self.goto(Screen::About),
             _ => {}
         }
     }
@@ -937,7 +1055,7 @@ impl App {
             self.dirty = true;
         }
         if self.saver.is_some() {
-            if now.duration_since(self.anim_at) >= Duration::from_millis(150) {
+            if now.duration_since(self.anim_at) >= Duration::from_millis(60) {
                 self.anim_at = now;
                 self.dirty = true;
             }
@@ -1047,6 +1165,12 @@ impl App {
                     self.dirty = true;
                 }
             }
+            Screen::Clock { .. } | Screen::Player { .. } | Screen::SaverPick | Screen::Piano { .. } => {
+                if now.duration_since(self.anim_at) >= Duration::from_millis(70) {
+                    self.anim_at = now;
+                    self.dirty = true;
+                }
+            }
             Screen::Diag | Screen::About => {
                 let secs = self.started.elapsed().as_secs();
                 if secs != self.last_secs {
@@ -1071,14 +1195,10 @@ impl App {
         let oled = &mut self.canvas;
         oled.clear();
         if let Some(t0) = self.saver {
-            // screensaver: a small bun drifts around so no pixel stays lit; much later the screen is fully dark
+            // screensaver: always moving, few lit pixels; much later the screen is fully dark
             let el = t0.elapsed().as_millis() as u32;
             if el < SAVER_BLANK_MS {
-                let tri = |t: u32, span: u32| -> usize {
-                    let p = t % (2 * span);
-                    (if p < span { p } else { 2 * span - p }) as usize
-                };
-                oled.icon(tri(el / 110, 118), tri(el / 170, 54), &I_BUN);
+                crate::saver::draw(oled, self.saver_kind, el);
             }
             disp.submit(&self.canvas);
             return;
@@ -1162,6 +1282,49 @@ impl App {
                     }
                 }
                 oled.text(4, 55, "OK=new  <>=count");
+            }
+            Screen::SaverPick => {
+                crate::saver::draw(oled, self.saver_kind, self.started.elapsed().as_millis() as u32);
+                let name = crate::saver::NAMES[self.saver_kind];
+                oled.fill_rect(0, 56, 128, 8, false);
+                oled.text(0, 56, &format!("{} {}/{} <>", name, self.saver_kind + 1, crate::saver::COUNT));
+            }
+            Screen::Clock { edit } => {
+                let day = 24 * 3600;
+                let s = (self.clock.0 + self.clock.1.elapsed().as_secs() as u32) % day;
+                oled.card(0, 0, 128, 13);
+                oled.text(4, 0, "Clock");
+                oled.text(128 - 6 * 9, 0, if *edit { "SET: ^v <>" } else { "OK = set" });
+                oled.inset(0, 16, 128, 34);
+                oled.text_big(10, 22, &format!("{:02}:{:02}", s / 3600, (s / 60) % 60), 3);
+                oled.text(112, 40, &format!("{:02}", s % 60));
+                oled.text(0, 54, if *edit { "OK = done" } else { "starts 12:00 at boot" });
+            }
+            Screen::Player { idx, playing } => {
+                let t = &crate::music::TUNES[*idx];
+                oled.card(0, 0, 128, 13);
+                oled.text(4, 0, t.title);
+                oled.text(4, 16, t.by);
+                // equalizer bars that dance while it plays
+                let ms = self.started.elapsed().as_millis() as u32;
+                for i in 0..16u32 {
+                    let h = if *playing { 3 + ((ms / 90 + i * 37 + i * i).wrapping_mul(2654435761u32) >> 28) as usize * 2 } else { 2 };
+                    oled.fill_rect((i * 8 + 1) as usize, 50 - h.min(24), 6, h.min(24), true);
+                }
+                oled.text(0, 54, if *playing { "OK = stop" } else { "OK = play" });
+            }
+            Screen::Piano { key, at } => {
+                oled.text(0, 0, "Piano (BACK exits)");
+                for (i, (name, hz)) in crate::music::KEYS.iter().enumerate() {
+                    let x = 2 + i * 25;
+                    let down = *key == Some(i) && at.elapsed() < Duration::from_millis(250);
+                    oled.rect(x, 14, 22, 36);
+                    if down {
+                        oled.fill_rect(x + 1, 15, 20, 34, true);
+                    }
+                    oled.text(x + 1, 52, &name[..name.len().min(4)]);
+                    let _ = hz;
+                }
             }
             Screen::Mandel(m) => {
                 for y in 0..crate::mandel::H {

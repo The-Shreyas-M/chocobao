@@ -57,11 +57,21 @@ Buttons use the chip's internal pull-ups: no resistors are needed, just pin to b
    3. Unplug USB, connect **SCL to PB11 (27)** and **SDA to PB12 (26)**. Keep these two wires short and away from the buzzer wire.
 6. **Decoupling capacitor (recommended):** 10 uF electrolytic across 3V3 and GND on the breadboard, close to the OLED. **Long leg to 3V3, stripe (short leg) to GND.** Add a 2.2 uF in parallel if you like. Wrong polarity can burst it, so check before powering.
 
+### 4b. Upgrade: 8 ohm mini speaker through the PAM8403 amp (optional, much louder and clearer than the buzzer)
+**Never connect a speaker straight to a Dabao pin** (a pin gives a few mA, a speaker wants hundreds: it would overload and damage the pin). The PAM8403 module you already have does the power part.
+1. Remove the buzzer wires from PB3 (or leave the buzzer off).
+2. **Amp power:** module `5V`/`VCC` to the Dabao **VBUS (pin 40)**, module `GND` to Dabao GND. Put the **470 uF** electrolytic across the module's 5V and GND (long leg to 5V). Keep USB the only power source.
+3. **Signal:** PB3 (pin 32) to the `+` of a **10 uF** electrolytic (blocks DC), its `-` side to a **10 kohm** resistor, the resistor to the module's `L` (left) input. Module input `GND` to the Dabao GND. Turn the module's volume knob (if it has one) to about 25 percent first. The 10 kohm keeps the 3.3 V square wave from overdriving the amp.
+4. **Speaker:** the **8 ohm** speaker to the module's `L` speaker output (two terminals, either way round). Do **not** use the 4 ohm 10 W speaker (it can pull more current than USB allows and reset the board).
+5. PB1 (pin 29) is driven in opposite phase by the firmware for the bridge-buzzer option; with the amp wiring just leave it unconnected.
+6. Test with **Music -> Piano** or **Settings -> Buzzer test**. If you hear a hiss only, swap the 10 kohm for 4.7 kohm; if it distorts, lower the knob or use 22 kohm.
+7. Not yet possible: a real 4-voice synth (one pin gives one voice). Later: four BIO pins PC0..PC3 each through its own 1 kohm into one node, then the same 10 uF into the amp, gives four mixed voices.
+
 ## 5. First power-up
 1. Plug in USB. Measure 3V3 pin to GND: expect 3.2 to 3.4 V. Anything else: unplug.
-2. The LED blinks 3 times, then the OLED plays the boot animation (a jug pours chocolate over a bao bun, then "ChocoBao" types out), then the Home screen. BACK opens the menu: Utilities, Games, Lab, About. After 45 s without a button the screensaver (a small moving bun) starts; any button wakes it and resumes where you were.
-3. Press every button in **Lab -> Button test**: the five direction/OK entries show `ON` while held.
-4. **Lab -> Buzzer test** plays a C major scale up and down on the buzzer.
+2. The LED blinks 3 times, then the OLED plays the boot animation (a drop splashes into a rising pool and "ChocoBao" appears), then the Home screen (a bao spinning in a little microwave with melting chocolate). BACK opens the menu: Tools, Games, Music, Lab, Settings. After 45 s without a button the screensaver starts (pick it in Settings -> Screensaver: Drifting bun, Auto Pong, Eyes, Escape artist); any button wakes it and resumes where you were.
+3. Press every button in **Settings -> Button test**: the five direction/OK entries show `ON` while held.
+4. **Settings -> Buzzer test** plays a C major scale up and down on the buzzer.
 
 ## 6. If something does not work
 | Symptom | Check |
@@ -69,7 +79,7 @@ Buttons use the chip's internal pull-ups: no resistors are needed, just pin to b
 | Screen blank | VCC on 3V3 (not VBUS), SCL/SDA not swapped, wires seated. Some modules have address 0x3D or an SH1106 chip (shifted or garbled picture): tell me the text printed on the module. |
 | Screen glitches or the board restarts | Add the 10 uF capacitor; shorten the SCL/SDA wires; check the USB cable/port. Test with **hold BACK while the board boots**: that starts it with the display and sound off (LED only). If it still restarts there, it is power/wiring, not the display code. |
 | A button does nothing | Wire goes pin to button to GND (not 3V3); look at Button test and the LED blink code. |
-| No sound | `+` on pin 32 through the 330 ohm, `-` on GND (or PB1); Lab -> Sound on/off must say ON; Lab -> Diagnostics last line should read `BIO tone ok` (or `BIO tone ok (bridge)` when PB1 is available). |
+| No sound | `+` on pin 32 through the 330 ohm, `-` on GND (or PB1); Settings -> Sound on/off must say ON; Settings -> Diagnostics last line should read `BIO tone ok` (or `BIO tone ok (bridge)` when PB1 is available). |
 | LED never lights | Long leg towards the resistor/PB4, flat side to GND. |
 
 ## 7. Flashing

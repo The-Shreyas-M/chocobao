@@ -51,3 +51,7 @@ Menu: Passwords (site-rules password, type 6 words, show 6 words, PIN), Dice, Ga
 3. BIO work via `libs/bio-lib` (std apps can load BIO code): pitched buzzer tone generator, then pin-event capture. Optional BIO showcase: IR remote learn/replay (bio/sw/nec_rx exists), WS2812, logic capture.
 4. Notary: Ed25519 (`ed25519-dalek-bao1x`), key from TRNG, signed events, PC `verify.py`; isolation demo needs a second Xous process (untested; fallback = threads + honest wording).
 5. README with reproduction steps, protocol spec, video, write-up. License TBD (suggest Apache-2.0). No new features after 12 Dec.
+
+## Update 10 Nov (v0.8+)
+- The in-app bootloader command and the Tools menu item were REMOVED. Flash with: hold PROG, tap RESET, release PROG, then `.venv/Scripts/python.exe tools/flash_auto.py` (app only) or with loader.uf2 xous.uf2 apps.uf2 after a kernel/HAL change.
+- v0.8 includes a HAL patch (patches/xous-i2c-bounded-spin.patch) and is stable (18+ min). See todo.md for the next rounds.

@@ -1,17 +1,10 @@
-"""flash_auto: flash the ChocoBao app with ONE button hold (PROG). No RESET tap, no re-plugging.
+"""flash_auto: flash the ChocoBao images over the bootloader's serial console (about 3 s for the app).
 
-  python tools/flash_auto.py                 flash the freshly built apps.uf2
-  python tools/flash_auto.py path/to/apps.uf2 [more.uf2 ...]
-
-What happens:
-  1. If the app is running, the script types `bootloader` into its console. The app starts a 5 s countdown and
-     then resets the whole chip (same as tapping RESET).
-  2. YOU hold PROG during that countdown (the script tells you when). boot1 sees PROG held and stays in the
-     bootloader. (Pressing PROG drops the USB connection; that is expected.)
-  3. As soon as the bootloader appears the script says "release PROG", flashes (about 2 s) and types `reset`;
-     bootwait is disabled, so the chip restarts straight into the app.
-If the board is already in the bootloader (you did PROG + RESET yourself) it skips straight to flashing.
-The very first time (firmware older than 10 Nov) the app's `bootloader` command does not exist: do PROG + RESET once.
+  1. Hold PROG, tap RESET, release PROG  (the board enters the bootloader, USB id 1d50:6196).
+  2. python tools/flash_auto.py                       -> app only (apps.uf2)
+     python tools/flash_auto.py loader.uf2 xous.uf2 apps.uf2   -> everything (after a kernel/HAL change)
+The script waits up to 3 minutes for the bootloader, flashes, then types `reset` so the chip restarts into the
+app (bootwait is disabled). The serial error printed at the very end is harmless: the board resets mid-write.
 """
 import argparse
 import pathlib
@@ -56,7 +49,6 @@ def type_slow(s, text):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("files", nargs="*")
-    ap.add_argument("--wait", action="store_true", help="do not send the command; wait up to 3 min for the bootloader (you start it from the device: Tools > Bootloader, then hold PROG)")
     a = ap.parse_args()
     files = a.files or [str(DEFAULT)]
     blocks = []
@@ -66,33 +58,11 @@ def main():
         blocks += b
 
     boot = port_for(BOOT_PID)
-    if not boot and a.wait:
-        print('waiting for the bootloader: on the device choose Tools > Bootloader, hold PROG during the 5 s countdown, release ~3 s after the screen goes dark')
+    if not boot:
+        print("waiting for the bootloader: hold PROG, tap RESET, release PROG")
         boot = wait_for(BOOT_PID, 180)
         if not boot:
-            sys.exit('no bootloader appeared within 3 minutes')
-    if not boot:
-        app = port_for(APP_PID)
-        if not app:
-            sys.exit("no board found (neither app nor bootloader USB id). Plug it in.")
-        print(f"app on {app}: asking it to reset into the bootloader...")
-        try:
-            s = serial.Serial(app, 1_000_000, timeout=0.2)
-        except serial.SerialException as e:
-            sys.exit(f"can't open {app} (another program using it?): {e}")
-        time.sleep(0.3)
-        s.reset_input_buffer()
-        type_slow(s, "bootloader")
-        print("\n>>> HOLD the PROG button NOW and keep holding it (the chip resets in 5 s) <<<\n")
-        time.sleep(0.5)
-        try:
-            s.close()
-        except Exception:
-            pass
-        boot = wait_for(BOOT_PID, 40)
-        if not boot:
-            sys.exit("the bootloader did not appear. Was PROG held through the reset? Run again, or hold PROG and tap RESET.")
-        print(">>> bootloader is up: you can RELEASE PROG now <<<")
+            sys.exit("no bootloader appeared within 3 minutes")
     print(f"bootloader on {boot}")
     time.sleep(2.0)
 

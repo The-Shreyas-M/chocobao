@@ -102,11 +102,9 @@ mod touch;
 use touch::*;
 mod bio;
 pub mod bip39_en;
-mod bootloader;
 mod dice;
 mod diag_cmd;
 use diag_cmd::*;
-use bootloader::*;
 use dice::*;
 use bio::*;
 
@@ -170,7 +168,6 @@ impl CmdEnv {
         let mut ver_cmd = Ver {};
         let mut console_cmd = Test {};
         let mut i2cdetect_cmd = I2cDetect {};
-        let mut bootloader_cmd = Bootloader {};
         let mut diag_cmd = DiagCmd {};
 
         let commands: &mut [&mut dyn ShellCmdApi] = &mut [
@@ -189,7 +186,6 @@ impl CmdEnv {
             &mut self.touch_cmd,
             &mut self.bio,
             &mut self.dice_cmd,
-            &mut bootloader_cmd,
             &mut diag_cmd,
         ];
 

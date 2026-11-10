@@ -57,7 +57,6 @@ fn items(m: MenuId) -> &'static [&'static str] {
             "SOS beeps",
             "Sound on/off",
             "Diagnostics",
-            "Bootloader",
         ],
     }
 }
@@ -589,21 +588,6 @@ impl App {
                 });
             }
             (MenuId::Tools, 7) => self.goto(Screen::Diag),
-            (MenuId::Tools, 8) => {
-                self.goto(Screen::Show {
-                    title: "Bootloader".into(),
-                    lines: vec![
-                        "HOLD PROG now!".into(),
-                        "reset in 5 s".into(),
-                        "release when flasher".into(),
-                        "says so".into(),
-                    ],
-                    back: MenuId::Tools,
-                });
-                self.draw();
-                self.dirty = false;
-                crate::bootmode::enter_bootloader();
-            }
             _ => {}
         }
     }

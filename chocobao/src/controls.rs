@@ -10,9 +10,9 @@ use std::time::{Duration, Instant};
 
 use bao1x_api::{IoGpio, IoSetup, IoxDir, IoxDriveStrength, IoxEnable, IoxFunction, IoxHal, IoxPort, IoxValue};
 
-const POLL_MS: u32 = 8;
-const PRESS_SAMPLES: u32 = 2; // 16 ms: a press is reported almost immediately
-const RELEASE_SAMPLES: u32 = 3; // 24 ms: contact bounce on release is ignored
+const POLL_MS: u32 = 4;
+const PRESS_SAMPLES: u32 = 2; // 8 ms: a press is reported almost immediately (tactile switches bounce < 5 ms)
+const RELEASE_SAMPLES: u32 = 4; // 16 ms: contact bounce on release is ignored
 const LED_ON_MS: u32 = 120;
 const LED_OFF_MS: u32 = 150;
 

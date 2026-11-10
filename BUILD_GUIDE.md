@@ -1,92 +1,168 @@
-# ChocoBao build guide: every connection (updated 10 Nov 2026, matches firmware v1.1)
+# ChocoBao build guide (updated 10 Nov 2026, firmware v1.5.0)
 
-Everything below is 3.3 V logic. The Dabao cannot make 5 V; 5 V exists only on the VBUS pin. **Never connect a signal to VBUS, VSYS, ON or RUN/RST_N, and never feed 5 V into any other pin.**
+Everything is 3.3 V logic. The Dabao cannot make 5 V; 5 V exists only on the VBUS pin. **Never connect a signal to VBUS, VSYS, ON or RUN/RST_N, and never feed 5 V into any other pin.**
 
-## 1. Parts for the full build
-| Part | Qty | Notes |
-|---|---|---|
-| Dabao on a breadboard (headers soldered) + USB-C cable | 1 | |
-| Tactile buttons | 6 | OK, UP, DOWN, LEFT, RIGHT, BACK |
-| LED + 330 ohm resistor | 1 + 1 | status LED |
-| 0.96" 128x64 I2C OLED, SSD1306 (4 pins: GND VCC SCL SDA) | 1 | |
-| Buzzer (active or passive both work) + 330 ohm resistor | 1 + 1 | |
-| Electrolytic capacitor 10 uF (optional, not fitted: the display works well without) | 0-1 | supply decoupling, see 4.6 |
-| Single-core wires | ~25 | red = 3.3 V, black = GND, other colours = signals |
-| Multimeter | 1 | for the checks in 3 and 6 |
+How to read this guide: every part has a table (what goes where) and, when it is more than two wires, a drawing. `---` is a wire, `[ ]` is a part, `GND` is any ground pin.
 
-## 2. Pin map (board header pin numbers)
-Header pins are numbered as printed in `repos/dabao/docs/pinout/index.html`. PROG (PC13) is pin 1, RESET (RST_N) is pin 30.
+## 1. Parts
+| Part | Qty | Used for | Have it? |
+|---|---|---|---|
+| Dabao on a breadboard (headers soldered), USB-C cable | 1 | the computer | yes |
+| Tactile buttons | 6 | OK, UP, DOWN, LEFT, RIGHT, BACK | yes |
+| LED + 330 ohm resistor | 1 + 1 | status light | yes |
+| 0.96" 128x64 I2C OLED (SSD1306, pins GND VCC SCL SDA) | 1 | screen | yes |
+| Buzzer (active or passive) | 1 | sound (current) | yes |
+| PAM8403 amplifier module | 1 | only for the speaker upgrade (section 9) | yes |
+| Speaker 4 ohm 10 W (big) | 1 | recommended for the upgrade | yes |
+| Speaker 8 ohm mini | 1 | later, only with the extra-quiet resistor (section 9); the first one blew | check |
+| Resistors 330 ohm, 1k, 10k, 22k | a few | see each section | yes (22k: buy or use 2x 10k + 2.2k) |
+| Capacitors 10 uF, 470 uF electrolytic | 1 each | speaker upgrade | yes |
+| Multimeter | 1 | checks in section 3 | yes |
+
+## 2. Pin map (board header pin numbers, from `repos/dabao/docs/pinout/index.html`)
+PROG (PC13) is pin 1, RESET (RST_N) is pin 30.
 
 | Function | Chip pin | Board pin | Goes to |
 |---|---|---|---|
-| OK | PB2 | 31 | button, other side to GND |
-| UP | PC10 | 5 | button, other side to GND |
-| DOWN | PC2 | 11 | button, other side to GND |
-| LEFT | PC3 | 10 | button, other side to GND |
-| RIGHT | PC9 | 6 | button, other side to GND |
-| BACK | PB5 | 35 | button, other side to GND |
-| LED | PB4 | 34 | 330 ohm resistor, then LED long leg (anode); LED short leg (flat side) to GND |
-| Buzzer + | PB3 | 32 | 330 ohm resistor, then buzzer `+` |
-| Buzzer - | GND (quiet, works) **or** PB1 (loud) | GND, or 29 | see step 4: GND is the simple wiring; PB1 doubles the voltage across the buzzer |
+| OK | PB2 | 31 | button, other leg to GND |
+| UP | PC10 | 5 | button, other leg to GND |
+| DOWN | PC2 | 11 | button, other leg to GND |
+| LEFT | PC3 | 10 | button, other leg to GND |
+| RIGHT | PC9 | 6 | button, other leg to GND |
+| BACK | PB5 | 35 | button, other leg to GND |
+| LED | PB4 | 34 | 330 ohm, then LED long leg |
+| Sound out | PB3 | 32 | buzzer + (section 6) or amp input (section 9) |
+| Sound out, 2nd phase | PB1 | 29 | only for the loud bridge buzzer, else leave empty |
 | OLED SCL | PB11 | 27 | OLED SCL |
 | OLED SDA | PB12 | 26 | OLED SDA |
-| OLED VCC | 3V3 | 36 | OLED VCC (never VBUS or VSYS) |
-| OLED GND | GND | 25 or 28 (next to SDA/SCL) | OLED GND |
+| OLED VCC | 3V3 | 36 | OLED VCC |
+| Ground | GND | 25, 28 and others | everything's ground |
+| 5 V (only for the amp) | VBUS | 40 | amp 5V |
 
-Buttons use the chip's internal pull-ups: no resistors are needed, just pin to button to GND. The board is mounted rotated, which is why UP/DOWN/LEFT/RIGHT map to the pins above (OK and BACK unchanged).
+Buttons use the chip's internal pull-ups: no resistors, just pin to button to GND. The board is mounted rotated, which is why UP/DOWN/LEFT/RIGHT sit on those pins.
 
-**Never connect anything to:** RUN / RST_N (30), 3V3 (36) except the OLED VCC wire and capacitor, ON (37), VSYS (39), VBUS (40), PC13 (1, the PROG button), PB13/PB14 (15/16, the console).
+**Never connect anything to:** RST_N (30), 3V3 (36) except the OLED VCC, ON (37), VSYS (39), PC13 (1, PROG), PB13/PB14 (15/16, the console).
 
-## 3. Before first power (USB unplugged, meter on continuity/beep)
-1. **3V3 pin (36) to GND**: must NOT beep (no short).
-2. **VBUS pin (40) to GND**: must NOT beep.
-3. Each pair of neighbouring soldered pins you use (for example 31/32/34/35): must NOT beep.
-4. Find GND pins from the pinout page and confirm one by beeping it to the USB-C metal shell.
+## 3. Before first power (USB unplugged, meter on the beep position)
+| Check | Must be |
+|---|---|
+| 3V3 (36) to GND | no beep |
+| VBUS (40) to GND | no beep |
+| each pair of neighbouring soldered pins you use | no beep |
+| one GND pin to the USB-C metal shell | beep |
 
-## 4. Wiring order (do it in steps, check after each)
-1. **GND rail:** black wire from a GND pin to the breadboard GND rail.
-2. **Buttons:** one wire from each pin in the table to its button, the other button leg to the GND rail. Wire PB2 (OK) first and test, then add the other five.
-3. **LED:** PB4 (34) to the 330 ohm resistor to the long leg; short leg to GND. After the app starts the LED blinks 3 times; it is on while any button is held and blinks a code after release (1 = OK, 2 = UP, 3 = DOWN, 4 = LEFT, 5 = RIGHT, 6 = BACK).
-4. **Buzzer:** PB3 (32) to the 330 ohm resistor to buzzer `+` (the side marked +). Then pick one:
-   - **Simple (what is built now):** buzzer `-` to GND. Works, quieter.
-   - **Loud (bridge drive):** buzzer `-` to **PB1 (pin 29)** instead of GND, and take the resistor out (bare piezo disc only; a coil-type buzzer under ~100 ohm must not be driven directly: measure it first). The firmware drives PB3 and PB1 in opposite phase, so the buzzer sees +-3.3 V instead of 0-3.3 V, roughly 4x the power. Pin 29 sits next to RESET (pin 30): keep the wire end clear of it.
-   - Either way: **no capacitor across the buzzer** (it would cut the high notes).
-5. **OLED (safe procedure, the only real danger is 5 V on SDA/SCL):**
-   1. USB unplugged. Connect OLED **VCC to 3V3 (36)** and **GND to GND** only. Do NOT connect SCL/SDA yet.
-   2. Plug USB in. With the meter on DC volts measure **SDA to GND** and **SCL to GND** on the OLED module: both must read 3.3 V or less. If either is above 3.5 V, unplug and do not connect them.
-   3. Unplug USB, connect **SCL to PB11 (27)** and **SDA to PB12 (26)**. Keep these two wires short and away from the buzzer wire.
-6. **Decoupling capacitor (recommended):** 10 uF electrolytic across 3V3 and GND on the breadboard, close to the OLED. **Long leg to 3V3, stripe (short leg) to GND.** Add a 2.2 uF in parallel if you like. Wrong polarity can burst it, so check before powering.
+## 4. Buttons (6x)
+| Button | Leg 1 to | Leg 2 to |
+|---|---|---|
+| OK | pin 31 | GND |
+| UP | pin 5 | GND |
+| DOWN | pin 11 | GND |
+| LEFT | pin 10 | GND |
+| RIGHT | pin 6 | GND |
+| BACK | pin 35 | GND |
 
-### 4b. Upgrade: 8 ohm mini speaker through the PAM8403 amp (optional, much louder and clearer than the buzzer)
-**Never connect a speaker straight to a Dabao pin** (a pin gives a few mA, a speaker wants hundreds: it would overload and damage the pin). The PAM8403 module you already have does the power part.
-1. Remove the buzzer wires from PB3 (or leave the buzzer off).
-2. **Amp power:** module `5V`/`VCC` to the Dabao **VBUS (pin 40)**, module `GND` to Dabao GND. Put the **470 uF** electrolytic across the module's 5V and GND (long leg to 5V). Keep USB the only power source.
-3. **Signal:** PB3 (pin 32) to the `+` of a **10 uF** electrolytic (blocks DC), its `-` side to a **10 kohm** resistor, the resistor to the module's `L` (left) input. Module input `GND` to the Dabao GND. Turn the module's volume knob (if it has one) to about 25 percent first. The 10 kohm keeps the 3.3 V square wave from overdriving the amp.
-4. **Speaker:** the **8 ohm** speaker to the module's `L` speaker output (two terminals, either way round). Do **not** use the 4 ohm 10 W speaker (it can pull more current than USB allows and reset the board).
-5. PB1 (pin 29) is driven in opposite phase by the firmware for the bridge-buzzer option; with the amp wiring just leave it unconnected.
-6. Test with **Music -> Piano** or **Settings -> Buzzer test**. If you hear a hiss only, swap the 10 kohm for 4.7 kohm; if it distorts, lower the knob or use 22 kohm.
-7. Not yet possible: a real 4-voice synth (one pin gives one voice). Later: four BIO pins PC0..PC3 each through its own 1 kohm into one node, then the same 10 uF into the amp, gives four mixed voices.
+```
+ Dabao pin ----+
+               |
+             [button]      (the same for all six)
+               |
+ GND ----------+
+```
+Wire OK first, test it, then add the rest. Test in **Settings -> Button test**.
 
-## 5. First power-up
-1. Plug in USB. Measure 3V3 pin to GND: expect 3.2 to 3.4 V. Anything else: unplug.
-2. The LED blinks 3 times, then the OLED plays the boot animation (a drop splashes into a rising pool and "ChocoBao" appears), then the Home screen (a bao spinning in a little microwave with melting chocolate). BACK opens the menu: Tools, Games, Music, Lab, Settings. After 45 s without a button the screensaver starts (pick it in Settings -> Screensaver: Drifting bun, Auto Pong, Eyes, Escape artist); any button wakes it and resumes where you were.
-3. Press every button in **Settings -> Button test**: the five direction/OK entries show `ON` while held.
-4. **Settings -> Buzzer test** plays a C major scale up and down on the buzzer.
+## 5. LED
+| From | Through | To |
+|---|---|---|
+| pin 34 | 330 ohm resistor | LED long leg |
+| LED short leg (flat side) | | GND |
 
-## 6. If something does not work
+```
+ pin 34 ---[330]---|>|--- GND        (|>| = LED, flat side to GND)
+```
+It blinks 3 times at start, is on while a button is held, then blinks a code (1 OK, 2 UP, 3 DOWN, 4 LEFT, 5 RIGHT, 6 BACK).
+
+## 6. Buzzer (what is built now)
+| Option | Buzzer + | Buzzer - | Result |
+|---|---|---|---|
+| Simple (current) | pin 32 through 330 ohm | GND | works, quieter |
+| Loud bridge (bare piezo disc only) | pin 32, no resistor | pin 29 | about 4x the power |
+
+```
+ pin 32 ---[330]---( buzzer + )
+                   ( buzzer - )--- GND
+```
+No capacitor across the buzzer. A coil-type buzzer under about 100 ohm must not be bridged (measure it first).
+
+## 7. OLED (the only real danger is 5 V on SDA/SCL)
+| OLED pin | Goes to |
+|---|---|
+| VCC | pin 36 (3V3), never VBUS |
+| GND | pin 25 or 28 |
+| SCL | pin 27 |
+| SDA | pin 26 |
+
+Safe procedure: connect only VCC and GND first, plug in USB, measure SDA to GND and SCL to GND on the module (both must read 3.3 V or less), unplug, then connect SCL and SDA. Keep those two wires short and away from the sound wire. A 10 uF capacitor across 3V3 and GND near the OLED is optional (long leg to 3V3).
+
+## 8. First power-up
+1. Measure 3V3 to GND: 3.2 to 3.4 V. Anything else: unplug.
+2. The LED blinks 3 times, then the boot animation: a chip draws itself, four cores light, a padlock snaps shut, the noise settles into "ChocoBao", then "secure. fun. open." and "by Shreyas". Then Home (a bao spinning in a microwave). BACK opens the menu: Tools, Games, Music, Lab, Settings.
+3. Settings -> Button test shows ON while each button is held. Settings -> Buzzer test plays a scale.
+4. After 45 s idle a screensaver starts (pick it in Settings -> Screensaver); any button wakes it.
+
+## 9. Speaker upgrade through the PAM8403 (not wired yet; continue with the buzzer until you want this)
+**Why the mini speaker blew:** the PAM8403 multiplies its input by about 16 (24 dB). A 3.3 V square wave straight into it asks for several watts, a 0.5 W mini speaker cooks in seconds. The fix is to shrink the signal first (a resistor divider) and keep the module's volume knob at minimum when you power up. **A pin can never drive a speaker by itself.**
+
+**Easiest and safest: use the BIG 4 ohm 10 W speaker** (it survives mistakes). It can pull a lot of current from USB, so the divider below keeps the signal small (quiet room volume, well inside USB's limit).
+
+| From | Through | To |
+|---|---|---|
+| pin 32 (PB3) | 10 kohm resistor | node A |
+| node A | 330 ohm resistor | GND |
+| node A | 10 uF capacitor (the `+` leg towards node A) | amp input L |
+| amp input GND | | Dabao GND |
+| amp 5V | | pin 40 (VBUS) |
+| amp GND | | Dabao GND |
+| 470 uF capacitor | across amp 5V and GND (long leg to 5V) | |
+| big speaker, 2 wires | | amp left output (L+ and L-), either way round |
+
+```
+ Dabao                                    PAM8403 module
+ -----                                    --------------
+ pin 32 --[10k]--+--(+)10uF(-)---------->  L-IN
+                 |
+               [330]                       GND-IN <--+
+                 |                                   |
+ GND ------------+-----------------------------------+--- GND
+ pin 40 (VBUS) --------------+-------------------->  5V
+                         (+)470uF(-)
+ GND ------------------------+-------------------->  GND
+                                           L+ L- ---> speaker (any order)
+```
+
+Rules so nothing blows:
+1. Volume knob at minimum when you plug in, then raise it slowly while a tune plays.
+2. Only 4 ohm 10 W speaker first. For the 8 ohm mini speaker later, change the 10 kohm to **22 kohm** (4x quieter) and keep the knob below one quarter.
+3. If it hisses or is too quiet, make the top resistor smaller **but never below 4.7 kohm**.
+4. If the Dabao resets when the music is loud, the speaker takes too much USB current: turn the knob down.
+5. PB1 (pin 29) stays unconnected in this wiring.
+6. Real 4-voice sound is not built yet (one pin = one voice). Later: four BIO pins, each through 1 kohm into the same node A.
+
+## 10. If something does not work
 | Symptom | Check |
 |---|---|
-| Screen blank | VCC on 3V3 (not VBUS), SCL/SDA not swapped, wires seated. Some modules have address 0x3D or an SH1106 chip (shifted or garbled picture): tell me the text printed on the module. |
-| Screen glitches or the board restarts | Add the 10 uF capacitor; shorten the SCL/SDA wires; check the USB cable/port. Test with **hold BACK while the board boots**: that starts it with the display and sound off (LED only). If it still restarts there, it is power/wiring, not the display code. |
-| A button does nothing | Wire goes pin to button to GND (not 3V3); look at Button test and the LED blink code. |
-| No sound | `+` on pin 32 through the 330 ohm, `-` on GND (or PB1); Settings -> Sound on/off must say ON; Settings -> Diagnostics last line should read `BIO tone ok` (or `BIO tone ok (bridge)` when PB1 is available). |
-| LED never lights | Long leg towards the resistor/PB4, flat side to GND. |
+| Screen blank | OLED VCC on 3V3 (not VBUS), SCL/SDA not swapped, wires seated; some modules are address 0x3D or an SH1106 (shifted picture): tell me the text on the module |
+| Screen glitches or the board restarts | shorten SCL/SDA wires, add the 10 uF capacitor, try another USB port; hold BACK while booting to start with display and sound off |
+| A button does nothing | wire goes pin to button to GND; look at Button test and the LED blink code |
+| No sound | + on pin 32 through 330 ohm, - on GND; Settings -> Sound on/off says ON; Settings -> Diagnostics last line says `BIO tone ok` |
+| LED never lights | long leg towards the resistor, flat side to GND |
 
-## 7. Flashing
+## 11. Flashing
 1. Hold **PROG** (button nearest the USB-C port), tap **RESET** (farthest from USB-C), release PROG.
-2. Run `.venv\Scripts\python.exe -u tools\flash_auto.py <loader.uf2> <xous.uf2> <apps.uf2>` with the three files from `repos\xous-core\target\riscv32imac-unknown-xous-elf\release\` (always flash all three after a rebuild; see HANDOFF.md).
-3. The script flashes in about 8 s and starts the app by itself (serial `boot`). The serial error at the very end is harmless.
+2. Run `.venv\Scripts\python.exe -u tools\flash_auto.py <loader.uf2> <xous.uf2> <apps.uf2>` with the three files from `repos\xous-core\target\riscv32imac-unknown-xous-elf\release\` (always all three; see HANDOFF.md).
+3. It flashes in about 8 s and starts the app by itself. The serial error at the very end is harmless.
 
-## 8. Safe-mode switches (hold while the board boots, release after the LED blinks)
-- Hold **BACK**: no display, no sound (nothing touches I2C or the BIO).
-- Hold **DOWN**: no sound only.
+## 12. Safe-mode switches (hold while the board boots, release after the LED blinks)
+| Hold | Result |
+|---|---|
+| BACK | no display, no sound (nothing touches I2C or the BIO) |
+| DOWN | no sound only |

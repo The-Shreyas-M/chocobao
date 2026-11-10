@@ -31,6 +31,7 @@ OK=PB2 (31), UP=PC10 (5), DOWN=PC2 (11), LEFT=PC3 (10), RIGHT=PC9 (6), BACK=PB5 
 - Stability tool: `.venv/Scripts/python.exe tools/watch_diag.py --minutes 60` (kill old watchers with PowerShell `Get-CimInstance Win32_Process | ? CommandLine -like '*watch_diag*' | Stop-Process`, they hold the COM port).
 
 ## 6. Status
+- **v1.5.0 (repo head, built, NOT flashed; the board is running v1.4.0)**: see the first section of todo.md for what changed and the user's open backlog (tunes via `tools/midi2tune.py`, more games/tools/customisation, chip showcase features). Piano removed. Speaker wiring is in BUILD_GUIDE section 9; the user has NOT wired a speaker yet.
 - **v1.4.0 (flashed, running)**: menus are now Tools, Games, Music, Lab, Settings (Settings holds Screensaver, Sound, Buzzer test, Button test, Diagnostics, About). New: microwave+bao+chocolate-bar home screen, 4 screensavers (`saver.rs`: bun, auto Pong, Eyes with moods, Escape artist), Clock (set by hand, RAM only), Music player with Blinding Lights and Attention (`music.rs`, written by ear, approximate), Piano. BUILD_GUIDE 4b has the 8 ohm speaker via PAM8403. Not seen on the real screen yet.
 - **v1.3.0 (repo head, built, NOT flashed)**: easier Pac-Man (ghost cage with door, player starts bottom centre, no dead ends, pellets are blinking rings, 4 lives, slower ghosts), password/PIN/passphrase secrets are never drawn on the OLED (masked, hold OK types), new boot/home animation (drop, splash, rising liquid with XOR title). If the build says `failed to get rend`, set `CARGO_NET_OFFLINE=true`.
 - **v1.2 (repo head) adds Seed words (Utilities, `seed.rs`) and Mandelbrot zoom (Lab, `mandel.rs`); built and committed, NOT flashed. Flash all three images with the next PROG+RESET.** Mandelbrot controls: OK pause, UP/DOWN zoom, LEFT/RIGHT target.
@@ -42,7 +43,7 @@ OK=PB2 (31), UP=PC10 (5), DOWN=PC2 (11), LEFT=PC3 (10), RIGHT=PC9 (6), BACK=PB5 
 - Linux: not realistic (2 MiB RAM; no verified port); Xous is the supported OS. Real DOOM does not fit (WAD ~4 MB vs ~0.87 MB app region), hence ChocoDoom.
 
 ## 7. Gotchas learned
-- **Version number lives in `chocobao/Cargo.toml` (`version`); the About screen reads it at build time. Bump it with every flash** (now 1.4.0).
+- **Version number lives in `chocobao/Cargo.toml` (`version`); the About screen reads it at build time. Bump it with every flash** (now 1.5.0).
 - Bash tool: big heredocs with quotes sometimes fail to parse. Write files with the Write tool and apply edits with a small Python script (`tools/_edit_*.py`, then delete). Write requires a prior Read of an existing file.
 - Windows: `pkill` does not kill Windows Python; use PowerShell. PowerShell `Start-Process` breaks on paths with spaces; use Bash with absolute paths.
 - Do not toggle a pin at audio rate through IoxHal (floods the HAL); use the BIO tone generator. Keep OLED I2C on its own thread.

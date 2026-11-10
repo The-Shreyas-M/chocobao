@@ -35,7 +35,6 @@ const TICK_MS: u64 = 16;
 const WATCHDOG_MS: u32 = 20_000; // only a truly dead display bus should restart the app
 const WIPE_MS: u128 = 180;
 const SAVER_S: u64 = 45; // idle seconds before the screensaver starts
-const SAVER_BLANK_MS: u32 = 150_000; // after this long in the screensaver the screen goes fully dark
 
 // ------------------------------------------------------------------ icons (8x8, MSB = left pixel)
 const I_TOOLBOX: [u8; 8] = [0x3C, 0x24, 0xFF, 0x81, 0xBD, 0x81, 0xFF, 0x00];
@@ -85,7 +84,7 @@ const fn it(label: &'static str, icon: &'static [u8; 8], desc: &'static str) -> 
 static MAIN_ITEMS: [Item; 5] = [
     it("Tools", &I_TOOLBOX, "Passwords, clock, timers"),
     it("Games", &I_GAMEPAD, "9 games incl. Pac-Man"),
-    it("Music", &I_SPEAKER, "Tunes and a piano"),
+    it("Music", &I_SPEAKER, "Tunes on the buzzer"),
     it("Lab", &I_FLASK, "Experiments"),
     it("Settings", &I_GEAR, "Saver, sound, tests, about"),
 ];
@@ -112,10 +111,9 @@ static GAME_ITEMS: [Item; 9] = [
     it("Pac-Man", &I_PAC, "Eat the dots, dodge ghosts"),
     it("Magic 8-ball", &I_BALL, "Ask a yes/no question"),
 ];
-static MUSIC_ITEMS: [Item; 3] = [
+static MUSIC_ITEMS: [Item; 2] = [
     it("Blinding Lights", &I_SPEAKER, "The Weeknd (by ear)"),
     it("Attention", &I_SPEAKER, "Charlie Puth (by ear)"),
-    it("Piano", &I_SPEAKER, "Play notes with buttons"),
 ];
 static LAB_ITEMS: [Item; 2] = [
     it("Mandelbrot", &I_BUN, "Endless fractal zoom"),
@@ -165,7 +163,6 @@ const H_GAME: usize = 8; // + game index (0..=7, 8 = Magic 8-ball)
 const H_SEED: usize = 17;
 const H_MANDEL: usize = 18;
 const H_CLOCK: usize = 19;
-const H_PIANO: usize = 20;
 const H_PLAYER: usize = 21;
 const HELP_COUNT: usize = 22;
 
@@ -180,7 +177,6 @@ fn help_text(id: usize) -> (&'static str, [&'static str; 4]) {
         H_TIMER => ("Timer", ["<>  +/- 10 seconds", "^v  +/- 1 minute", "OK  start / pause", "alarm when it ends"]),
         H_ENT => ("Entropy meter", ["Counts the 1 bits of", "the hardware random", "generator. Healthy = 50%", "bars about equal"]),
         H_CLOCK => ("Clock", ["no battery clock, so set", "it once after power-up", "OK = set / done", "^v hours   <> minutes"]),
-        H_PIANO => ("Piano", ["LEFT UP RIGHT DOWN OK", "play C E G A C", "one note per press", "BACK exits"]),
         H_PLAYER => ("Music player", ["OK = play / stop", "plays on the buzzer", "tunes were written by", "ear, so notes may differ"]),
         H_MANDEL => ("Mandelbrot", ["zooms by itself, on-chip", "OK pause   ^v zoom", "<> other place", "integer maths, no float"]),
         H_SEED => ("Seed words", ["<>  12/15/18/21/24", "^v  next / prev page", "OK  new (checksum ok)", "never typed or saved"]),
@@ -255,7 +251,6 @@ enum Screen {
     Mandel(Box<crate::mandel::Mandel>),
     Clock { edit: bool },
     Player { idx: usize, playing: bool },
-    Piano { key: Option<usize>, at: Instant },
     SaverPick,
     Game { idx: usize, g: Box<dyn Game> },
     Ball(Option<usize>),
@@ -280,7 +275,6 @@ fn screen_code(s: &Screen) -> u32 {
         Screen::Mandel(_) => 12,
         Screen::Clock { .. } => 13,
         Screen::Player { .. } => 14,
-        Screen::Piano { .. } => 15,
         Screen::SaverPick => 16,
         Screen::Ball(_) => 10,
         Screen::ButtonTest => 20,
@@ -315,7 +309,6 @@ fn parent(s: &Screen) -> Screen {
         Screen::Mandel(_) => Screen::Menu(MenuId::Lab, 0),
         Screen::Clock { .. } => Screen::Menu(MenuId::Utilities, 9),
         Screen::Player { idx, .. } => Screen::Menu(MenuId::Music, *idx),
-        Screen::Piano { .. } => Screen::Menu(MenuId::Music, 2),
         Screen::SaverPick => Screen::Menu(MenuId::Settings, 0),
         Screen::Game { idx, .. } => Screen::Menu(MenuId::Games, *idx),
         Screen::Ball(_) => Screen::Menu(MenuId::Games, 8),
@@ -709,22 +702,6 @@ impl App {
                     }
                 }
             }
-            Screen::Piano { key, at } => {
-                let k = match b {
-                    Btn::Left => Some(0),
-                    Btn::Up => Some(1),
-                    Btn::Right => Some(2),
-                    Btn::Down => Some(3),
-                    Btn::Ok => Some(4),
-                    _ => None,
-                };
-                if let Some(k) = k {
-                    *key = Some(k);
-                    *at = Instant::now();
-                    self.snd.play(&[(crate::music::KEYS[k].1, 220)]);
-                    redraw = true;
-                }
-            }
             Screen::SaverPick => {
                 let n = crate::saver::COUNT;
                 match b {
@@ -987,7 +964,6 @@ impl App {
                 self.snd.silence();
                 self.open(H_PLAYER, Screen::Player { idx: sel, playing: false })
             }
-            (MenuId::Music, 2) => self.open(H_PIANO, Screen::Piano { key: None, at: Instant::now() }),
             (MenuId::Lab, 0) => self.open(H_MANDEL, Screen::Mandel(Box::new(crate::mandel::Mandel::new()))),
             (MenuId::Lab, 1) => {
                 self.snd.play(sound::SOS);
@@ -1165,7 +1141,7 @@ impl App {
                     self.dirty = true;
                 }
             }
-            Screen::Clock { .. } | Screen::Player { .. } | Screen::SaverPick | Screen::Piano { .. } => {
+            Screen::Clock { .. } | Screen::Player { .. } | Screen::SaverPick => {
                 if now.duration_since(self.anim_at) >= Duration::from_millis(70) {
                     self.anim_at = now;
                     self.dirty = true;
@@ -1197,9 +1173,7 @@ impl App {
         if let Some(t0) = self.saver {
             // screensaver: always moving, few lit pixels; much later the screen is fully dark
             let el = t0.elapsed().as_millis() as u32;
-            if el < SAVER_BLANK_MS {
-                crate::saver::draw(oled, self.saver_kind, el);
-            }
+            crate::saver::draw(oled, self.saver_kind, el);
             disp.submit(&self.canvas);
             return;
         }
@@ -1312,19 +1286,6 @@ impl App {
                     oled.fill_rect((i * 8 + 1) as usize, 50 - h.min(24), 6, h.min(24), true);
                 }
                 oled.text(0, 54, if *playing { "OK = stop" } else { "OK = play" });
-            }
-            Screen::Piano { key, at } => {
-                oled.text(0, 0, "Piano (BACK exits)");
-                for (i, (name, hz)) in crate::music::KEYS.iter().enumerate() {
-                    let x = 2 + i * 25;
-                    let down = *key == Some(i) && at.elapsed() < Duration::from_millis(250);
-                    oled.rect(x, 14, 22, 36);
-                    if down {
-                        oled.fill_rect(x + 1, 15, 20, 34, true);
-                    }
-                    oled.text(x + 1, 52, &name[..name.len().min(4)]);
-                    let _ = hz;
-                }
             }
             Screen::Mandel(m) => {
                 for y in 0..crate::mandel::H {
@@ -1446,9 +1407,9 @@ impl App {
             Screen::About => {
                 let secs = self.started.elapsed().as_secs();
                 oled.text(0, 0, concat!("ChocoBao v", env!("CARGO_PKG_VERSION")));
-                oled.text(0, 13, "Baochip-1x + Xous");
-                oled.text(0, 26, "350 MHz RISC-V, MMU");
-                oled.text(0, 39, "4 BIO cores, TRNG");
+                oled.text(0, 13, "made by Shreyas");
+                oled.text(0, 26, "Baochip-1x + Xous");
+                oled.text(0, 39, "RISC-V, 4 BIO, TRNG");
                 oled.text(0, 52, &format!("up {}m {}s", secs / 60, secs % 60));
             }
         }

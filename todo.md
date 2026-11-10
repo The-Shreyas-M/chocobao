@@ -16,6 +16,24 @@ Status key: [ ] open, [~] in progress, [x] done. Rewritten 10 Nov 2026 (firmware
 - [x] Neumorphic look started: raised cards for menu rows and password panels, sunken panel for the secret. Passphrase wraps by words.
 - [x] BUILD_GUIDE.md rewritten (all connections). HANDOFF.md rewritten.
 
+## Backlog from the 10 Nov evening session (user's list, do in this order)
+Done in v1.5.0 (built, NOT flashed yet, unseen on screen): Doom smooth + responsive (time-based movement with acceleration, shots every 0.16 s, hold OK to autofire, wider hit cone, button poll 4 ms), "by Shreyas" in About / home / boot, new chip-themed boot (chip draws itself, 4 cores light, padlock, TRNG noise settles into the title), landscape microwave + shaded 3D-ish spinning bao + 2-column chocolate bar, Eyes saver with 10 moods + mouth that eats a chocolate bar + drifting pixels (no more blank screen), Piano removed, BUILD_GUIDE rewritten with a table per part and ASCII wiring (speaker section 9), `tools/midi2tune.py`.
+- [ ] **Flash v1.5.0 and check:** Doom feel (turn, sprint, shoot an enemy that appears), boot animation, home, eyes + feeding, About name. If Doom is still laggy: measure with `diag` (loopmax, pushmax); the OLED push (about 30 ms per frame over I2C) may be the limit, then raise the I2C clock or draw fewer pixels.
+- [ ] **Tunes from the sheets:** the music is still my by-ear guess and sounds wrong. Get a MIDI of each sheet (MuseScore: Download -> MIDI), run `python tools/midi2tune.py song.mid` to list tracks, then `--track N --name BLINDING_LIGHTS --bars 1-16 > out.rs` and paste into `chocobao/src/music.rs`. Sheets given: Blinding Lights (168 bpm, 3 flats, Perfect Easy piano arr.) and Attention (100 bpm, 1 flat, arr. Sadie King).
+- [ ] **More games** (ideas: Breakout, Tetris-like blocks, Minesweeper, 2048, Tic-tac-toe vs computer, Maze runner, Space shooter, Lunar lander, Whack-a-mole, Memory pairs, Connect 4).
+- [ ] **More tools:** calculator, unit converter, coin/dice presets, morse trainer, metronome, hex/binary converter, countdown to a date, habit counter, flashlight (full-screen white), text typer presets (type your email/address on hold).
+- [ ] **More customisation:** per-user name on the home screen, screensaver idle time, display contrast/brightness, key-repeat speed, sound volume steps (duty/pitch), start-up animation on/off, theme (invert screen), choose the first screen. Settings in RAM only unless the user asks (ReRAM write endurance).
+- [ ] **More screensaver expressions / ideas:** extra eye moods (crying, laughing, sneezing, bored), mouth lip-sync to music, bao eating the chocolate bar.
+- [ ] **Speaker:** user has not wired it. When they do: follow BUILD_GUIDE section 9 (divider, knob at minimum, big 4 ohm speaker first). Never wire a speaker directly to a pin.
+- [ ] **Chip showcase features (the user asked, none built yet):**
+  - 4-voice synth, one BIO core per voice (needs 4 pins into a resistor mixer, then the amp).
+  - BIO "scope": a BIO core samples our own pins and draws the waveform.
+  - TRNG health screen: show the raw bits, bias, runs test.
+  - The Notary: BIO timestamps events, an isolated process signs with Ed25519, PC `verify.py`, MMU kills a game that tries to read the key.
+  - Glitch / tamper sensors: check whether the chip exposes them to apps (read `libs/bao1x-hal` sensor and glitch-detect registers first, do not assume).
+  - Idea, unverified: AM "radio transmitter" demo: a BIO core pulses a pin near 1 MHz amplitude-modulated by a tune, a nearby AM radio may pick it up from a few cm. Receiving FM/AM is not realistic with this chip.
+- [ ] **Passwords never shown:** done for Password/Passphrase/PIN. Seed words still shows the words (needed to write them down): ask the user if those should be typed too.
+
 ## Round 1b: polish after seeing it on the real screen
 - [ ] Flash v1.1 and collect feedback on: boot animation, home, icons, help screens, wipe, screensaver, neumorphic panels, Pac-Man speed, Doom.
 - [ ] Neumorphic style everywhere (Dice, Random, Timer, Stopwatch, Entropy, Lab screens); consistent header/footer; nicer scroll indicator.

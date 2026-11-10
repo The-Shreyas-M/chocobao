@@ -35,7 +35,11 @@ const MAP: [&str; 16] = [
 const NCOL: usize = 64; // rays per frame, each drawn 2 pixels wide
 const VIEW_TOP: i32 = 12;
 const VIEW_H: i32 = 52;
-const TICK_MS: u128 = 70;
+const TURN_MAX: f32 = 2.6; // rad/s
+const TURN_ACC: f32 = 16.0; // rad/s^2 (reaches full speed in ~0.16 s, stops as fast)
+const MOVE_MAX: f32 = 2.6; // map units/s
+const MOVE_ACC: f32 = 18.0;
+const FIRE_CD: f32 = 0.16; // seconds between shots
 
 struct Enemy {
     x: f32,
@@ -52,9 +56,12 @@ pub struct Doom {
     enemies: Vec<Enemy>,
     fwd: i32,
     turn: i32,
-    fire_cd: i32,
-    flash: i32,
-    hurt_cd: i32,
+    fire_cd: f32,
+    flash: f32,
+    hurt_cd: f32,
+    turn_v: f32,
+    move_v: f32,
+    fire_held: bool,
     alive: bool,
     won: bool,
     paused: bool,
@@ -85,9 +92,12 @@ impl Doom {
             enemies: spots.iter().map(|&(x, y)| Enemy { x, y, hp: 2 }).collect(),
             fwd: 0,
             turn: 0,
-            fire_cd: 0,
-            flash: 0,
-            hurt_cd: 0,
+            fire_cd: 0.0,
+            flash: 0.0,
+            hurt_cd: 0.0,
+            turn_v: 0.0,
+            move_v: 0.0,
+            fire_held: false,
             alive: true,
             won: false,
             paused: false,
@@ -122,11 +132,11 @@ impl Doom {
     }
 
     fn fire(&mut self) {
-        if self.fire_cd > 0 || !self.alive {
+        if self.fire_cd > 0.0 || !self.alive {
             return;
         }
-        self.fire_cd = 4;
-        self.flash = 2;
+        self.fire_cd = FIRE_CD;
+        self.flash = 0.12;
         self.snd = Some(Snd::Tick);
         let wall = self.wall_ahead();
         let mut best: Option<(usize, f32)> = None;
@@ -135,7 +145,7 @@ impl Doom {
                 continue;
             }
             let (tx, ty) = self.project(e);
-            if ty > 0.2 && ty < wall && (tx / ty).abs() < 0.22 && best.map(|b| ty < b.1).unwrap_or(true) {
+            if ty > 0.2 && ty < wall && (tx / ty).abs() < 0.32 && best.map(|b| ty < b.1).unwrap_or(true) {
                 best = Some((i, ty));
             }
         }
@@ -185,16 +195,33 @@ impl Game for Doom {
     fn held(&mut self, down: &[bool; 6]) {
         self.fwd = (down[1] as i32) - (down[2] as i32);
         self.turn = (down[4] as i32) - (down[3] as i32);
+        self.fire_held = down[0];
     }
 
     fn update(&mut self, _t: &Trng) -> bool {
-        if !self.alive || self.paused || self.last.elapsed().as_millis() < TICK_MS {
+        if !self.alive || self.paused {
             return false;
         }
+        // time based, so the speed does not depend on how often this is called (smooth and responsive)
+        let dt = self.last.elapsed().as_secs_f32().min(0.08);
         self.last = Instant::now();
-        self.a += self.turn as f32 * 0.14;
-        if self.fwd != 0 {
-            let (nx, ny) = (self.px + self.a.cos() * 0.17 * self.fwd as f32, self.py + self.a.sin() * 0.17 * self.fwd as f32);
+        let approach = |v: f32, target: f32, acc: f32| -> f32 {
+            let step = acc * dt;
+            if v < target - step {
+                v + step
+            } else if v > target + step {
+                v - step
+            } else {
+                target
+            }
+        };
+        self.turn_v = approach(self.turn_v, self.turn as f32 * TURN_MAX, TURN_ACC);
+        self.move_v = approach(self.move_v, self.fwd as f32 * MOVE_MAX, MOVE_ACC);
+        let mut changed = self.turn_v != 0.0 || self.move_v != 0.0;
+        self.a += self.turn_v * dt;
+        if self.move_v != 0.0 {
+            let step = self.move_v * dt;
+            let (nx, ny) = (self.px + self.a.cos() * step, self.py + self.a.sin() * step);
             if !is_wall(nx, self.py) {
                 self.px = nx;
             }
@@ -202,14 +229,17 @@ impl Game for Doom {
                 self.py = ny;
             }
         }
-        if self.fire_cd > 0 {
-            self.fire_cd -= 1;
+        self.fire_cd = (self.fire_cd - dt).max(0.0);
+        if self.fire_held {
+            self.fire(); // holding OK keeps shooting
         }
-        if self.flash > 0 {
-            self.flash -= 1;
+        if self.flash > 0.0 {
+            self.flash = (self.flash - dt).max(0.0);
+            changed = true;
         }
-        if self.hurt_cd > 0 {
-            self.hurt_cd -= 1;
+        if self.hurt_cd > 0.0 {
+            self.hurt_cd = (self.hurt_cd - dt).max(0.0);
+            changed = true;
         }
         let (px, py) = (self.px, self.py);
         let mut hurt = false;
@@ -217,29 +247,33 @@ impl Game for Doom {
             let (rx, ry) = (px - e.x, py - e.y);
             let d = (rx * rx + ry * ry).sqrt();
             if d < 9.0 && d > 0.6 {
-                let (sx, sy) = (rx / d * 0.05, ry / d * 0.05);
+                let (sx, sy) = (rx / d * 0.72 * dt, ry / d * 0.72 * dt);
                 if !is_wall(e.x + sx, e.y) {
                     e.x += sx;
                 }
                 if !is_wall(e.x, e.y + sy) {
                     e.y += sy;
                 }
+                changed = true;
             } else if d <= 0.6 {
                 hurt = true;
             }
         }
-        if hurt && self.hurt_cd == 0 {
+        if hurt && self.hurt_cd <= 0.0 {
             self.hp -= 1;
-            self.hurt_cd = 10;
+            self.hurt_cd = 0.7;
             self.snd = Some(Snd::Crash);
+            changed = true;
         }
         if self.hp <= 0 {
             self.alive = false;
+            changed = true;
         } else if self.enemies.iter().all(|e| e.hp <= 0) {
             self.alive = false;
             self.won = true;
+            changed = true;
         }
-        true
+        changed || self.fire_cd > 0.0
     }
 
     fn draw(&self, c: &mut Canvas, _best: u32) {
@@ -327,12 +361,12 @@ impl Game for Doom {
         c.dot(64, mid + 2, true);
         c.fill_rect(60, 58, 8, 6, true);
         c.fill_rect(62, 54, 4, 5, true);
-        if self.flash > 0 {
+        if self.flash > 0.0 {
             c.line(64, 53, 58, 46);
             c.line(64, 53, 70, 46);
             c.line(64, 53, 64, 44);
         }
-        if self.hurt_cd > 6 {
+        if self.hurt_cd > 0.4 {
             c.invert_rect(0, VIEW_TOP as usize, 128, 52);
         }
         if !self.alive {

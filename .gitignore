@@ -1,0 +1,19 @@
+# upstream clones and toolchains (re-created by the setup steps in README / PROCEDURE.md)
+repos/
+.venv/
+bio/venv/
+**/target/
+**/zig-cache/
+**/.zig-cache/
+**/zig-out/
+__pycache__/
+*.pyc
+
+# build products, logs, personal photos and PC-maintenance notes
+*.uf2
+*.log
+*.jpg
+*.jpeg
+C_cleanup.md
+C_cleanup.ps1
+.gitcp.md

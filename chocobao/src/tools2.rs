@@ -8,7 +8,7 @@ use bao1x_hal_service::trng::Trng;
 use crate::controls::Btn;
 use crate::oled::Canvas;
 use crate::rng::below;
-use crate::sound::{Note, A5, C6, REST};
+use crate::sound::{Note, A5, B6, C6, E6, REST};
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Kind {
@@ -53,7 +53,7 @@ pub fn help(k: Kind) -> (&'static str, [&'static str; 4]) {
         Kind::Calc => ("Calculator", ["<> ^v pick a key", "OK = press the key", "= shows the answer", "C clears, < deletes"]),
         Kind::Units => ("Unit converter", ["^v  pick conversion", "<>  change the value", "OK  step 0.1/1/10/100", ""]),
         Kind::Base => ("Base converter", ["^v +1 / -1", "<> +16 / -16", "OK  step x1 x16 x256", "shows dec hex bin"]),
-        Kind::Metro => ("Metronome", ["<> tempo +/- 1", "^v tempo +/- 10", "OK start / stop", "first beat is higher"]),
+        Kind::Metro => ("Metronome", ["^v tempo +/- 5", "<> beats per bar", "OK start / stop", "first beat chirps"]),
         Kind::Habit => ("Habit counter", ["^v pick a habit", "OK +1   LEFT -1", "RIGHT = reset it", "kept until power off"]),
         Kind::Morse => ("Morse trainer", ["<> pick a letter", "OK plays it", "UP = quiz: hidden", "DOWN = reveal it"]),
         Kind::Typer => ("Text presets", ["^v pick a text", "HOLD OK types it into", "the PC (click a box", "first). Edit tools2.rs"]),
@@ -260,6 +260,7 @@ impl ToolState {
         };
         if kind == Kind::Metro {
             s.val = 100.0;
+            s.sub = 4; // beats per bar
         }
         if kind == Kind::Flash {
             s.sel = 2;
@@ -277,11 +278,11 @@ impl ToolState {
             Kind::Calc => (0, 10),
             Kind::Units => (0, 11),
             Kind::Base => (0, 12),
-            Kind::Metro => (0, 13),
-            Kind::Habit => (0, 14),
-            Kind::Morse => (0, 15),
-            Kind::Typer => (0, 16),
-            Kind::Flash => (0, 17),
+            Kind::Metro => (1, 3),
+            Kind::Habit => (0, 13),
+            Kind::Morse => (0, 14),
+            Kind::Typer => (0, 15),
+            Kind::Flash => (0, 16),
             Kind::Synth => (1, 2),
             Kind::Scope => (2, 2),
             Kind::Health => (2, 3),
@@ -345,10 +346,10 @@ impl ToolState {
                 self.val = self.val.clamp(0.0, 65535.0);
             }
             Kind::Metro => match b {
-                Btn::Left => self.val -= 1.0,
-                Btn::Right => self.val += 1.0,
-                Btn::Up => self.val += 10.0,
-                Btn::Down => self.val -= 10.0,
+                Btn::Left => self.sub = (self.sub - 1).max(2),
+                Btn::Right => self.sub = (self.sub + 1).min(8),
+                Btn::Up => self.val += 5.0,
+                Btn::Down => self.val -= 5.0,
                 Btn::Ok => {
                     self.flag = !self.flag;
                     self.beat = 0;
@@ -500,7 +501,9 @@ impl ToolState {
                 if self.flag && now >= self.next_at {
                     let bpm = self.val.clamp(30.0, 260.0);
                     self.next_at = now + Duration::from_millis((60_000.0 / bpm) as u64);
-                    o.play = Some(vec![if self.beat % 4 == 0 { (C6, 28) } else { (A5, 22) }]);
+                    let beats = self.sub.clamp(2, 8) as u32;
+                    // the first beat of each bar is a longer two-note chirp, the others one short low tick
+                    o.play = Some(if self.beat % beats == 0 { vec![(E6, 40), (B6, 70)] } else { vec![(A5, 18)] });
                     self.beat += 1;
                     o.redraw = true;
                 }
@@ -601,17 +604,20 @@ impl ToolState {
                 c.text(80, 8, "BPM");
                 c.text(80, 20, if self.flag { "playing" } else { "stopped" });
                 if self.flag {
-                    let on = (self.beat + 3) % 4;
-                    for i in 0..4u32 {
-                        let (x, y) = (8 + i as usize * 28, 40);
-                        c.rect(x, y, 20, 14);
+                    let beats = self.sub.clamp(2, 8) as u32;
+                    let on = (self.beat + beats - 1) % beats;
+                    let w = (120 / beats as usize).min(24);
+                    for i in 0..beats {
+                        let (x, y) = (4 + i as usize * (w + 1), 40);
+                        c.rect(x, y, w - 2, 14);
                         if i == on {
-                            c.fill_rect(x + 1, y + 1, 18, 12, true);
+                            c.fill_rect(x + 1, y + 1, w - 4, 12, true);
                         }
                     }
                 } else {
                     c.text(4, 44, "OK = start");
                 }
+                c.text(80, 30, &format!("{} beats", self.sub.clamp(2, 8)));
             }
             Kind::Habit => {
                 for (i, h) in HABITS.iter().enumerate() {
@@ -650,17 +656,30 @@ impl ToolState {
             }
             Kind::Typer => {
                 c.text(0, 0, "Text presets");
+                // same behaviour as the menus: the highlight moves, the list scrolls only at the edges
+                let sel = self.sel as usize;
+                let start = if sel >= 3 { sel - 2 } else { 0 };
                 for k in 0..3 {
-                    let i = (self.sel as usize + k) % PRESETS.len();
+                    let i = start + k;
+                    if i >= PRESETS.len() {
+                        break;
+                    }
                     let y = 13 + 13 * k;
                     let t = PRESETS[i];
-                    c.card(0, y, 128, 12);
-                    c.text(3, y + 2, if t.len() > 20 { &t[..20] } else { t });
-                    if k == 0 {
-                        c.invert_rect(0, y, 128, 12);
+                    if i != sel {
+                        c.card(1, y, 124, 12);
+                    }
+                    c.text(4, y, if t.len() > 19 { &t[..19] } else { t });
+                    if i == sel {
+                        c.invert_rect(1, y, 124, 12);
                     }
                 }
-                c.text(0, 54, "Click a box, HOLD OK");
+                let n = PRESETS.len();
+                if n > 3 {
+                    let h = 39 * 3 / n;
+                    c.fill_rect(126, 13 + (39 - h) * sel / (n - 1), 2, h, true);
+                }
+                c.text(0, 52, "Click a box, HOLD OK");
             }
             Kind::Flash => {
                 let strobe = self.flag && (ms / 90) % 2 == 0;

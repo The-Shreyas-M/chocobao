@@ -99,6 +99,8 @@ enum Msg {
 }
 
 static FAT: AtomicBool = AtomicBool::new(false);
+static ACTIVE: AtomicBool = AtomicBool::new(false); // a background tune / song is playing
+static ONCE: AtomicBool = AtomicBool::new(false); // the current tune plays once (songs) instead of looping
 
 #[derive(Clone)]
 pub struct Sound {
@@ -138,16 +140,23 @@ impl Sound {
     /// Set (or clear) the looping background tune.
     pub fn tune(&self, t: Option<&'static [Note]>) {
         FAT.store(false, Ordering::Relaxed);
+        ONCE.store(false, Ordering::Relaxed);
+        ACTIVE.store(t.is_some(), Ordering::Relaxed);
         self.tx.send(Msg::Tune(t)).ok();
     }
 
     /// Like `tune`, but every note is played as a fast two-voice shimmer (note + octave) for a fuller buzzer sound.
     pub fn tune_fat(&self, t: Option<&'static [Note]>) {
         FAT.store(true, Ordering::Relaxed);
+        ONCE.store(true, Ordering::Relaxed);
+        ACTIVE.store(t.is_some(), Ordering::Relaxed);
         self.tx.send(Msg::Tune(t)).ok();
     }
 
     /// Stop the background tune (effects already queued still play).
+    /// True while a background tune or song is still playing (a song that has finished is false).
+    pub fn tune_active(&self) -> bool { ACTIVE.load(Ordering::Relaxed) }
+
     pub fn silence(&self) { self.tune(None); }
 
     pub fn toggle(&self) -> bool {
@@ -241,6 +250,7 @@ fn init_tone() -> Result<Tone, String> {
 impl Tone {
     /// Start a note and return immediately (the core plays it by itself).
     fn start(&mut self, hz: u32, ms: u32) {
+        let hz = if hz < 4000 { hz * 2 } else { hz }; // everything an octave higher: the buzzer is much louder there
         let half = (TICK_HZ / (2 * hz.clamp(50, 250_000))).max(1);
         let periods = (hz as u64 * ms as u64 / 1000).max(1) as u32;
         self.tx.csr.wo(bio_bdma::SFR_TXF1, half);
@@ -298,6 +308,11 @@ fn run(rx: Receiver<Msg>, enabled: Arc<AtomicBool>, status: Arc<Mutex<String>>) 
         let note = if let Some(n) = effects.pop_front() {
             Some(n)
         } else if let (Some(t), true) = (tune, on) {
+            if ONCE.load(Ordering::Relaxed) && idx >= t.len() {
+                tune = None; // the song is over
+                ACTIVE.store(false, Ordering::Relaxed);
+                continue;
+            }
             let n = t[idx % t.len()];
             idx += 1;
             from_tune = true;
@@ -314,7 +329,7 @@ fn run(rx: Receiver<Msg>, enabled: Arc<AtomicBool>, status: Arc<Mutex<String>>) 
                     let (mut left, mut k) = (ms, 0u32);
                     while left > 0 {
                         let sl = left.min(12);
-                        t.start(if k % 2 == 0 { hz } else { (hz * 2).min(5000) }, sl);
+                        t.start(if k % 2 == 0 { hz } else { (hz * 2).min(2500) }, sl);
                         tt.sleep_ms(sl as usize).ok();
                         left -= sl;
                         k += 1;

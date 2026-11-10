@@ -14,21 +14,23 @@ use crate::games::{Game, Snd};
 use crate::oled::Canvas;
 use crate::rng::below;
 
-pub const NAMES: [&str; 11] = [
+pub const NAMES: [&str; 13] = [
     "Breakout",
-    "Block Drop",
+    "Tetris",
     "2048",
     "Tic-Tac-Toe",
     "Connect 4",
-    "Memory Pairs",
+    "Memory",
     "Whack-a-Mole",
     "Minesweeper",
-    "Space Shooter",
+    "Space Invaders",
     "Lunar Lander",
-    "Maze Runner",
+    "Maze",
+    "Tower Blocks",
+    "Solitaire",
 ];
 
-pub const DESCS: [&str; 11] = [
+pub const DESCS: [&str; 13] = [
     "Smash all the bricks",
     "Stack falling blocks",
     "Merge tiles to 2048",
@@ -39,10 +41,12 @@ pub const DESCS: [&str; 11] = [
     "Hold OK to flag mines",
     "Shoot the invaders",
     "Land softly on the pad",
-    "Find the exit, fast",
+    "Find the exit, 3 levels",
+    "Stack the city blocks",
+    "Klondike, draw one",
 ];
 
-pub const HELP: [[&str; 4]; 11] = [
+pub const HELP: [[&str; 4]; 13] = [
     ["<> move paddle", "OK launch the ball", "clear every brick", "3 lives"],
     ["<> move  ^ rotate", "v soft drop", "OK = hard drop", "clear full lines"],
     ["^v<> slide tiles", "equal tiles merge", "reach 2048", "no moves = game over"],
@@ -53,11 +57,13 @@ pub const HELP: [[&str; 4]; 11] = [
     ["^v<> move cursor", "OK reveals a cell", "HOLD OK = flag", "clear all safe cells"],
     ["<> move the ship", "OK shoots", "clear the waves", "3 lives"],
     ["OK = main thrust", "<> side thrusters", "land on the pad", "slow and level"],
-    ["^v<> walk", "find the exit", "at the far corner", "faster = more points"],
+    ["^v<> walk", "find the exit", "at the far corner", "3 levels, bigger each"],
+    ["OK drops the block", "land it on the tower", "overhang is cut off", "perfect = bonus"],
+    ["<> pile  ^v how many", "OK lift, OK drop", "HOLD OK = foundation", "at stock: OK draws"],
 ];
 
 /// 8x8 menu icons, one byte per row, most significant bit = leftmost pixel.
-pub const ICONS: [[u8; 8]; 11] = [
+pub const ICONS: [[u8; 8]; 13] = [
     [0xFF, 0x00, 0xDB, 0x00, 0x00, 0x10, 0x00, 0x7E], // Breakout
     [0x00, 0x18, 0x18, 0x7E, 0x00, 0x6C, 0x6C, 0x00], // Block Drop
     [0x7E, 0x81, 0xB9, 0xA1, 0xB9, 0x85, 0xB9, 0x7E], // 2048
@@ -69,6 +75,8 @@ pub const ICONS: [[u8; 8]; 11] = [
     [0x10, 0x10, 0x38, 0x38, 0x7C, 0xFE, 0xFE, 0x00], // Space Shooter
     [0x18, 0x24, 0x7E, 0x42, 0x24, 0x42, 0x81, 0xFF], // Lunar Lander
     [0xFF, 0x81, 0xBD, 0xA1, 0xAD, 0xA5, 0xBD, 0x81], // Maze
+    [0x18, 0x18, 0x3C, 0x3C, 0x7E, 0x7E, 0xFF, 0xFF], // Tower
+    [0x7E, 0x81, 0x99, 0xBD, 0xBD, 0x99, 0x81, 0x7E], // Solitaire
 ];
 
 pub fn make(i: usize, t: &Trng) -> Box<dyn Game> {
@@ -83,7 +91,9 @@ pub fn make(i: usize, t: &Trng) -> Box<dyn Game> {
         7 => Box::new(Mines::new()),
         8 => Box::new(Shooter::new()),
         9 => Box::new(Lander::new(t)),
-        _ => Box::new(Maze::new(t)),
+        10 => Box::new(Maze::new(t)),
+        11 => Box::new(Tower::new()),
+        _ => Box::new(Solitaire::new(t)),
     }
 }
 
@@ -1541,7 +1551,7 @@ impl Game for Mines {
                             fr(c, px + 3, py + 2, 4, 4, true);
                             c.dot(px + 5, py + 1, true);
                             c.dot(px + 5, py + 6, true);
-                        } else {
+                        } else if !(x == self.cx && y == self.cy && self.result == 0) {
                             for yy in 0..7 {
                                 for xx in 0..9 {
                                     if (xx + yy) % 2 == 0 {
@@ -1553,7 +1563,9 @@ impl Game for Mines {
                     }
                 }
                 if x == self.cx && y == self.cy && self.result == 0 {
+                    // the selected cell becomes a solid light block (content in dark) with a frame around it
                     c.invert_rect(px as usize, py as usize, 9, 7);
+                    rc(c, px - 1, py - 1, 11, 9);
                 }
             }
         }
@@ -1946,12 +1958,17 @@ impl Game for Lander {
     fn take_sound(&mut self) -> Option<Snd> { self.snd.take() }
 }
 
-// ---------------------------------------------------------------- 10 Maze Runner
-const MZW: usize = 31;
-const MZH: usize = 13;
+// ---------------------------------------------------------------- 10 Maze (three levels, each bigger)
+static MAZE_LEVEL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// (columns, rows, pixels per cell) per level; all fit inside 128 x 52.
+const MAZE_SIZES: [(usize, usize, usize); 3] = [(31, 13, 4), (41, 17, 3), (61, 25, 2)];
 
 pub struct Maze {
-    wall: [[bool; MZW]; MZH],
+    wall: Vec<bool>,
+    w: usize,
+    h: usize,
+    cs: i32,
+    level: usize,
     px: i32,
     py: i32,
     elapsed: u32, // ms
@@ -1966,15 +1983,17 @@ pub struct Maze {
 
 impl Maze {
     pub fn new(t: &Trng) -> Self {
-        let mut wall = [[true; MZW]; MZH];
+        let level = MAZE_LEVEL.load(std::sync::atomic::Ordering::Relaxed) % MAZE_SIZES.len();
+        let (w, h, cs) = MAZE_SIZES[level];
+        let mut wall = vec![true; w * h];
         // iterative depth-first search over the odd cells
         let mut stack: Vec<(usize, usize)> = vec![(1, 1)];
-        wall[1][1] = false;
+        wall[w + 1] = false;
         while let Some(&(x, y)) = stack.last() {
             let mut opts: Vec<(usize, usize, usize, usize)> = Vec::new();
             for (dx, dy) in [(2i32, 0i32), (-2, 0), (0, 2), (0, -2)] {
                 let (nx, ny) = (x as i32 + dx, y as i32 + dy);
-                if nx > 0 && ny > 0 && (nx as usize) < MZW - 1 && (ny as usize) < MZH - 1 && wall[ny as usize][nx as usize] {
+                if nx > 0 && ny > 0 && (nx as usize) < w - 1 && (ny as usize) < h - 1 && wall[ny as usize * w + nx as usize] {
                     opts.push((nx as usize, ny as usize, (x as i32 + dx / 2) as usize, (y as i32 + dy / 2) as usize));
                 }
             }
@@ -1982,13 +2001,17 @@ impl Maze {
                 stack.pop();
             } else {
                 let (nx, ny, wx, wy) = opts[rnd(t, opts.len() as u32) as usize];
-                wall[wy][wx] = false;
-                wall[ny][nx] = false;
+                wall[wy * w + wx] = false;
+                wall[ny * w + nx] = false;
                 stack.push((nx, ny));
             }
         }
         Maze {
             wall,
+            w,
+            h,
+            cs: cs as i32,
+            level,
             px: 1,
             py: 1,
             elapsed: 0,
@@ -2003,14 +2026,16 @@ impl Maze {
     }
     fn walk(&mut self, dx: i32, dy: i32) -> bool {
         let (nx, ny) = (self.px + dx, self.py + dy);
-        if nx < 0 || ny < 0 || nx >= MZW as i32 || ny >= MZH as i32 || self.wall[ny as usize][nx as usize] {
+        if nx < 0 || ny < 0 || nx >= self.w as i32 || ny >= self.h as i32 || self.wall[ny as usize * self.w + nx as usize] {
             return false;
         }
         self.px = nx;
         self.py = ny;
-        if nx == MZW as i32 - 2 && ny == MZH as i32 - 2 {
+        if nx == self.w as i32 - 2 && ny == self.h as i32 - 2 {
             self.won = true;
             self.snd = Some(Snd::Coin);
+            // OK after winning starts the next, bigger maze (after the last one it starts over with the first)
+            MAZE_LEVEL.store((self.level + 1) % MAZE_SIZES.len(), std::sync::atomic::Ordering::Relaxed);
         }
         true
     }
@@ -2053,7 +2078,7 @@ impl Game for Maze {
             if self.walk(dx, dy) {
                 self.dirty = true;
             }
-            self.rep_at = Instant::now() + Duration::from_millis(110);
+            self.rep_at = Instant::now() + Duration::from_millis(if self.level == 2 { 70 } else { 110 });
         }
     }
     fn update(&mut self, _t: &Trng) -> bool {
@@ -2062,7 +2087,7 @@ impl Game for Maze {
         }
         self.elapsed += dt_ms(&mut self.last);
         let sec = self.elapsed / 1000;
-        let mut changed = self.dirty;
+        let mut changed = self.dirty || self.elapsed / 250 != (self.elapsed.saturating_sub(20)) / 250;
         self.dirty = false;
         if sec != self.last_sec {
             self.last_sec = sec;
@@ -2071,25 +2096,561 @@ impl Game for Maze {
         changed
     }
     fn draw(&self, c: &mut Canvas, _best: u32) {
-        txt(c, 0, 0, &format!("{}s", self.elapsed / 1000));
-        for y in 0..MZH {
-            for x in 0..MZW {
-                if self.wall[y][x] {
-                    fr(c, 2 + x as i32 * 4, 12 + y as i32 * 4, 4, 4, true);
+        txt(c, 0, 0, &format!("Maze {}/3  {}s", self.level + 1, self.elapsed / 1000));
+        let cs = self.cs;
+        for y in 0..self.h {
+            for x in 0..self.w {
+                if self.wall[y * self.w + x] {
+                    fr(c, 2 + x as i32 * cs, 12 + y as i32 * cs, cs, cs, true);
                 }
             }
         }
         // the exit blinks, the runner is a small square
-        let (gx, gy) = (2 + (MZW as i32 - 2) * 4, 12 + (MZH as i32 - 2) * 4);
+        let (gx, gy) = (2 + (self.w as i32 - 2) * cs, 12 + (self.h as i32 - 2) * cs);
         if (self.elapsed / 300) % 2 == 0 {
-            rc(c, gx, gy, 4, 4);
+            if cs >= 4 { rc(c, gx, gy, cs, cs) } else { fr(c, gx, gy, cs, cs, true) }
         }
-        fr(c, 2 + self.px * 4 + 1, 12 + self.py * 4 + 1, 2, 2, true);
+        if cs >= 4 {
+            fr(c, 2 + self.px * cs + 1, 12 + self.py * cs + 1, cs - 2, cs - 2, true);
+        } else if (self.elapsed / 150) % 2 == 0 {
+            fr(c, 2 + self.px * cs, 12 + self.py * cs, cs, cs, true);
+        }
         if self.won {
             over_box(c, "ESCAPED!");
         }
     }
-    fn score(&self) -> u32 { if self.won { 600u32.saturating_sub((self.elapsed / 1000) * 5).max(10) } else { 0 } }
+    fn score(&self) -> u32 { if self.won { (600u32 + self.level as u32 * 300).saturating_sub((self.elapsed / 1000) * 5).max(10) } else { 0 } }
     fn over(&self) -> bool { self.won }
+    fn take_sound(&mut self) -> Option<Snd> { self.snd.take() }
+}
+
+// ---------------------------------------------------------------- 11 Tower (stack city blocks, like Tower Bloxx)
+const TOWER_BH: i32 = 6; // block height in pixels
+const TOWER_TOP: i32 = 40; // screen y of the top of the highest block
+const TOWER_SWING_Y: i32 = 18;
+
+pub struct Tower {
+    blocks: Vec<(i32, i32)>, // (left x, width) of the newest blocks, oldest first
+    w: i32,
+    t: u32, // ms of swinging, drives the crane
+    phase: u8, // 0 swinging, 1 falling, 2 toppled
+    fx: i32,
+    fy: i32,
+    fy_acc: u32,
+    stacked: u32,
+    combo: u32,
+    score: u32,
+    paused: bool,
+    last: Instant,
+    snd: Option<Snd>,
+}
+
+impl Tower {
+    pub fn new() -> Self {
+        Tower {
+            blocks: vec![(44, 40)],
+            w: 40,
+            t: 0,
+            phase: 0,
+            fx: 0,
+            fy: 0,
+            fy_acc: 0,
+            stacked: 0,
+            combo: 0,
+            score: 0,
+            paused: false,
+            last: Instant::now(),
+            snd: None,
+        }
+    }
+    fn swing_x(&self) -> i32 {
+        let span = (128 - self.w).max(1) as u32;
+        let ms_per_px = (9u32.saturating_sub(self.stacked / 4)).max(3); // faster as the tower grows
+        let p = (self.t / ms_per_px) % (2 * span);
+        (if p < span { p } else { 2 * span - p }) as i32
+    }
+    fn land(&mut self) {
+        let (tx, tw) = *self.blocks.last().unwrap_or(&(44, 40));
+        let overlap = (self.fx + self.w).min(tx + tw) - self.fx.max(tx);
+        if overlap <= 0 {
+            self.phase = 2;
+            self.snd = Some(Snd::Crash);
+            return;
+        }
+        let perfect = (self.fx - tx).abs() <= 2;
+        if perfect {
+            self.combo += 1;
+            self.score += 2 + self.combo;
+            self.fx = tx; // snaps into place, keeps its full width
+            self.snd = Some(Snd::Coin);
+        } else {
+            self.combo = 0;
+            self.score += 1;
+            self.w = overlap;
+            self.fx = self.fx.max(tx);
+            self.snd = Some(Snd::Tick);
+        }
+        self.blocks.push((self.fx, self.w));
+        if self.blocks.len() > 8 {
+            self.blocks.remove(0);
+        }
+        self.stacked += 1;
+        self.phase = 0;
+    }
+}
+
+fn building(c: &mut Canvas, x: i32, y: i32, w: i32) {
+    fr(c, x, y, w, TOWER_BH, false);
+    rc(c, x, y, w, TOWER_BH);
+    let mut wx = x + 2;
+    while wx + 1 < x + w - 1 {
+        c.dot(wx, y + 2, true);
+        c.dot(wx + 1, y + 2, true);
+        c.dot(wx, y + 3, true);
+        c.dot(wx + 1, y + 3, true);
+        wx += 4;
+    }
+}
+
+impl Game for Tower {
+    fn can_pause(&self) -> bool { true }
+    fn is_paused(&self) -> bool { self.paused }
+    fn set_paused(&mut self, p: bool) {
+        if self.phase != 2 {
+            self.paused = p;
+            self.last = Instant::now();
+        }
+    }
+    fn press(&mut self, b: Btn, _t: &Trng) -> bool {
+        if self.paused {
+            if b == Btn::Ok {
+                self.set_paused(false);
+            }
+            return true;
+        }
+        if b == Btn::Ok && self.phase == 0 {
+            self.fx = self.swing_x();
+            self.fy = TOWER_SWING_Y;
+            self.fy_acc = 0;
+            self.phase = 1;
+            self.snd = Some(Snd::Click);
+            return true;
+        }
+        false
+    }
+    fn update(&mut self, _t: &Trng) -> bool {
+        if self.phase == 2 || self.paused {
+            return false;
+        }
+        let dt = dt_ms(&mut self.last);
+        if self.phase == 0 {
+            self.t += dt;
+            return true;
+        }
+        // falling: 1 px per 8 ms
+        self.fy_acc += dt;
+        let step = (self.fy_acc / 8) as i32;
+        self.fy_acc %= 8;
+        self.fy += step;
+        if self.fy >= TOWER_TOP - TOWER_BH {
+            self.fy = TOWER_TOP - TOWER_BH;
+            self.land();
+        }
+        true
+    }
+    fn draw(&self, c: &mut Canvas, _best: u32) {
+        txt(c, 0, 0, &format!("{} blocks", self.stacked));
+        if self.combo > 1 {
+            txt(c, 80, 0, &format!("x{} perfect", self.combo));
+        }
+        // the tower: newest block on top, older ones below, ground at the bottom
+        let n = self.blocks.len();
+        for k in 0..4usize {
+            if k < n {
+                let (x, w) = self.blocks[n - 1 - k];
+                building(c, x, TOWER_TOP + k as i32 * TOWER_BH, w);
+            }
+        }
+        fr(c, 0, 63, 128, 1, true);
+        match self.phase {
+            0 => {
+                let x = self.swing_x();
+                fr(c, x + self.w / 2, 11, 1, TOWER_SWING_Y - 11, true); // the crane rope
+                building(c, x, TOWER_SWING_Y, self.w);
+            }
+            1 => building(c, self.fx, self.fy, self.w),
+            _ => {
+                building(c, self.fx, self.fy.min(TOWER_TOP + 2), self.w);
+                over_box(c, "TOPPLED");
+            }
+        }
+    }
+    fn score(&self) -> u32 { self.score }
+    fn over(&self) -> bool { self.phase == 2 }
+    fn take_sound(&mut self) -> Option<Snd> { self.snd.take() }
+}
+
+// ---------------------------------------------------------------- 12 Solitaire (Klondike, draw one)
+// cards: 0..52, rank = c % 13 (0 = ace .. 12 = king), suit = c / 13 (0 spade, 1 heart, 2 diamond, 3 club)
+const GLYPH: [[u8; 5]; 13] = [
+    [0b010, 0b101, 0b111, 0b101, 0b101], // A
+    [0b110, 0b001, 0b010, 0b100, 0b111], // 2
+    [0b110, 0b001, 0b010, 0b001, 0b110], // 3
+    [0b101, 0b101, 0b111, 0b001, 0b001], // 4
+    [0b111, 0b100, 0b110, 0b001, 0b110], // 5
+    [0b011, 0b100, 0b110, 0b101, 0b010], // 6
+    [0b111, 0b001, 0b010, 0b010, 0b010], // 7
+    [0b010, 0b101, 0b010, 0b101, 0b010], // 8
+    [0b010, 0b101, 0b011, 0b001, 0b110], // 9
+    [0b111, 0b010, 0b010, 0b010, 0b010], // T (10)
+    [0b001, 0b001, 0b001, 0b101, 0b010], // J
+    [0b010, 0b101, 0b101, 0b111, 0b011], // Q
+    [0b101, 0b101, 0b110, 0b101, 0b101], // K
+];
+const SUITS: [[u8; 5]; 4] = [
+    [0b00100, 0b01110, 0b11111, 0b11111, 0b00100], // spade
+    [0b01010, 0b11111, 0b11111, 0b01110, 0b00100], // heart
+    [0b00100, 0b01110, 0b11111, 0b01110, 0b00100], // diamond
+    [0b01110, 0b01110, 0b11111, 0b11111, 0b00100], // club
+];
+
+fn is_red(c: u8) -> bool { matches!(c / 13, 1 | 2) }
+
+fn card_face(c: &mut Canvas, x: i32, y: i32, card: u8) {
+    for (r, bits) in GLYPH[(card % 13) as usize].iter().enumerate() {
+        for col in 0..3 {
+            if bits & (0b100 >> col) != 0 {
+                c.dot(x + 2 + col, y + 2 + r as i32, true);
+            }
+        }
+    }
+    for (r, bits) in SUITS[(card / 13) as usize % 4].iter().enumerate() {
+        for col in 0..5 {
+            if bits & (0b10000 >> col) != 0 {
+                c.dot(x + 7 + col, y + 2 + r as i32, true);
+            }
+        }
+    }
+}
+
+pub struct Solitaire {
+    tab: Vec<Vec<u8>>,
+    up: [usize; 7], // index of the first face-up card in each column
+    stock: Vec<u8>,
+    waste: Vec<u8>,
+    found: [u8; 4],
+    cur: i32, // 0 stock, 1 waste, 2..=8 columns
+    depth: usize, // how many face-up cards of the column are lifted
+    hold: Option<(i32, usize)>, // (source cursor position, number of cards) being carried
+    ok_down: bool,
+    ok_since: Instant,
+    ok_fired: bool,
+    want_ok: bool,
+    dirty: bool,
+    moves: u32,
+    snd: Option<Snd>,
+}
+
+impl Solitaire {
+    pub fn new(t: &Trng) -> Self {
+        let mut deck: Vec<u8> = (0..52).collect();
+        for i in (1..52usize).rev() {
+            let j = rnd(t, i as u32 + 1) as usize;
+            deck.swap(i, j);
+        }
+        let mut tab: Vec<Vec<u8>> = Vec::new();
+        let mut up = [0usize; 7];
+        for col in 0..7 {
+            let mut v = Vec::new();
+            for _ in 0..=col {
+                v.push(deck.pop().unwrap_or(0));
+            }
+            up[col] = col;
+            tab.push(v);
+        }
+        Solitaire {
+            tab,
+            up,
+            stock: deck,
+            waste: Vec::new(),
+            found: [0; 4],
+            cur: 0,
+            depth: 1,
+            hold: None,
+            ok_down: false,
+            ok_since: Instant::now(),
+            ok_fired: false,
+            want_ok: false,
+            dirty: true,
+            moves: 0,
+            snd: None,
+        }
+    }
+    fn col_of(pos: i32) -> Option<usize> { if (2..=8).contains(&pos) { Some((pos - 2) as usize) } else { None } }
+    fn faceup(&self, col: usize) -> usize { self.tab[col].len().saturating_sub(self.up[col]) }
+    fn won(&self) -> bool { self.found.iter().map(|&n| n as u32).sum::<u32>() == 52 }
+    fn fix(&mut self, col: usize) {
+        if !self.tab[col].is_empty() && self.up[col] >= self.tab[col].len() {
+            self.up[col] = self.tab[col].len() - 1; // flip the new top card
+        }
+        if self.tab[col].is_empty() {
+            self.up[col] = 0;
+        }
+    }
+    fn can_found(&self, card: u8) -> bool { self.found[(card / 13) as usize % 4] == card % 13 }
+    fn can_stack(&self, card: u8, col: usize) -> bool {
+        match self.tab[col].last() {
+            None => card % 13 == 12,
+            Some(&t) => is_red(card) != is_red(t) && card % 13 + 1 == t % 13,
+        }
+    }
+    fn top_of(&self, pos: i32) -> Option<u8> {
+        match pos {
+            1 => self.waste.last().copied(),
+            p => Solitaire::col_of(p).and_then(|c| self.tab[c].last().copied()),
+        }
+    }
+    /// OK released after a short press.
+    fn ok_short(&mut self) {
+        if let Some((src, n)) = self.hold.take() {
+            // drop the carried cards on the column under the cursor
+            if let Some(dst) = Solitaire::col_of(self.cur) {
+                let cards: Vec<u8> = if src == 1 {
+                    self.waste.last().copied().into_iter().collect()
+                } else {
+                    let sc = (src - 2) as usize;
+                    let l = self.tab[sc].len();
+                    self.tab[sc][l.saturating_sub(n)..].to_vec()
+                };
+                if src != self.cur && !cards.is_empty() && self.can_stack(cards[0], dst) {
+                    if src == 1 {
+                        self.waste.pop();
+                    } else {
+                        let sc = (src - 2) as usize;
+                        let l = self.tab[sc].len();
+                        self.tab[sc].truncate(l.saturating_sub(n));
+                        self.fix(sc);
+                    }
+                    self.tab[dst].extend(cards);
+                    self.fix(dst);
+                    self.moves += 1;
+                    self.snd = Some(Snd::Click);
+                    self.depth = 1;
+                    return;
+                }
+                if src != self.cur {
+                    self.snd = Some(Snd::Crash);
+                }
+            }
+            return;
+        }
+        match self.cur {
+            0 => {
+                if let Some(c) = self.stock.pop() {
+                    self.waste.push(c);
+                } else {
+                    while let Some(c) = self.waste.pop() {
+                        self.stock.push(c); // recycle the waste face down
+                    }
+                }
+                self.snd = Some(Snd::Tick);
+            }
+            1 => {
+                if !self.waste.is_empty() {
+                    self.hold = Some((1, 1));
+                    self.snd = Some(Snd::Tick);
+                }
+            }
+            p => {
+                if let Some(col) = Solitaire::col_of(p) {
+                    let n = self.depth.clamp(1, self.faceup(col).max(1));
+                    if !self.tab[col].is_empty() {
+                        self.hold = Some((p, n));
+                        self.snd = Some(Snd::Tick);
+                    }
+                }
+            }
+        }
+    }
+    /// OK held: send the top card under the cursor to its foundation when that is allowed.
+    fn ok_long(&mut self) {
+        self.hold = None;
+        if let Some(card) = self.top_of(self.cur) {
+            if self.can_found(card) {
+                self.found[(card / 13) as usize % 4] += 1;
+                if self.cur == 1 {
+                    self.waste.pop();
+                } else if let Some(col) = Solitaire::col_of(self.cur) {
+                    self.tab[col].pop();
+                    self.fix(col);
+                }
+                self.moves += 1;
+                self.snd = Some(if self.won() { Snd::Coin } else { Snd::Click });
+            } else {
+                self.snd = Some(Snd::Crash);
+            }
+        }
+    }
+}
+
+impl Game for Solitaire {
+    fn press(&mut self, b: Btn, _t: &Trng) -> bool {
+        if self.won() {
+            return false;
+        }
+        match b {
+            Btn::Left | Btn::Right => {
+                let dir = if b == Btn::Right { 1 } else { -1 };
+                let lo = if self.hold.is_some() { 2 } else { 0 };
+                let n = 9 - lo;
+                self.cur = lo + (self.cur - lo + dir + n).rem_euclid(n);
+                self.depth = 1;
+            }
+            Btn::Up | Btn::Down => {
+                if self.hold.is_none() {
+                    if let Some(col) = Solitaire::col_of(self.cur) {
+                        let fu = self.faceup(col).max(1);
+                        if b == Btn::Up {
+                            self.depth = (self.depth + 1).min(fu);
+                        } else {
+                            self.depth = self.depth.saturating_sub(1).max(1);
+                        }
+                    }
+                }
+            }
+            Btn::Ok => {
+                self.ok_down = true;
+                self.ok_since = Instant::now();
+                self.ok_fired = false;
+                return false;
+            }
+            _ => return false,
+        }
+        true
+    }
+    fn held(&mut self, down: &[bool; 6]) {
+        if !self.ok_down || self.won() {
+            return;
+        }
+        if !down[0] {
+            self.ok_down = false;
+            if !self.ok_fired {
+                self.ok_fired = true;
+                self.want_ok = true;
+            }
+        } else if !self.ok_fired && self.ok_since.elapsed() >= Duration::from_millis(500) {
+            self.ok_fired = true;
+            self.ok_long();
+            self.dirty = true;
+        }
+    }
+    fn update(&mut self, _t: &Trng) -> bool {
+        if self.want_ok {
+            self.want_ok = false;
+            self.ok_short();
+            self.dirty = true;
+        }
+        let d = self.dirty;
+        self.dirty = false;
+        d
+    }
+    fn draw(&self, c: &mut Canvas, _best: u32) {
+        let ph = 14; // card height
+        let slot = |i: i32| 1 + i * 18;
+        // stock (face-down pattern), waste (top card), and the four foundations in slots 3..6
+        rc(c, slot(0), 0, 16, ph);
+        if !self.stock.is_empty() {
+            for yy in 1..ph - 1 {
+                for xx in 1..15 {
+                    if (xx + yy) % 2 == 0 {
+                        c.dot(slot(0) + xx, yy, true);
+                    }
+                }
+            }
+        } else if !self.waste.is_empty() {
+            txt(c, slot(0) + 5, 1, "o");
+        }
+        if let Some(&w) = self.waste.last() {
+            fr(c, slot(1), 0, 16, ph, false);
+            rc(c, slot(1), 0, 16, ph);
+            card_face(c, slot(1), 0, w);
+        }
+        for s in 0..4usize {
+            let x = slot(3 + s as i32);
+            rc(c, x, 0, 16, ph);
+            if self.found[s] > 0 {
+                card_face(c, x, 0, (s as u8) * 13 + self.found[s] - 1);
+            } else {
+                for (r, bits) in SUITS[s].iter().enumerate() {
+                    for col in 0..5 {
+                        if bits & (0b10000 >> col) != 0 && (col + r as i32) % 2 == 0 {
+                            c.dot(x + 5 + col, 4 + r as i32, true);
+                        }
+                    }
+                }
+            }
+        }
+        // the tableau
+        let top = 16;
+        for col in 0..7usize {
+            let x = slot(col as i32);
+            let n = self.tab[col].len();
+            if n == 0 {
+                rc(c, x, top, 16, ph);
+                continue;
+            }
+            let upn = self.up[col].min(n);
+            let fu = n - upn;
+            let fd_step = 3;
+            let budget = 64 - top - ph - upn as i32 * fd_step;
+            let step = if fu > 1 { (budget / (fu as i32 - 1)).clamp(4, 8) } else { 8 };
+            // y position of every card
+            let mut ys: Vec<i32> = Vec::with_capacity(n);
+            let mut y = top;
+            for k in 0..n {
+                ys.push(y);
+                y += if k < upn { fd_step } else { step };
+            }
+            for (k, &card) in self.tab[col].iter().enumerate() {
+                fr(c, x, ys[k], 16, ph, false);
+                rc(c, x, ys[k], 16, ph);
+                if k < upn {
+                    for xx in 1..15 {
+                        if xx % 2 == 0 {
+                            c.dot(x + xx, ys[k] + 1, true);
+                        }
+                    }
+                } else {
+                    card_face(c, x, ys[k], card);
+                }
+            }
+            // highlight the lifted (or about to be lifted) cards of this column
+            let lifted = match self.hold {
+                Some((src, cnt)) if src == col as i32 + 2 => Some(cnt),
+                None if self.cur == col as i32 + 2 => Some(self.depth.clamp(1, fu.max(1))),
+                _ => None,
+            };
+            if let Some(cnt) = lifted {
+                let first = n - cnt.min(n);
+                let y0 = ys[first];
+                let y1 = (ys[n - 1] + ph).min(64);
+                if y1 > y0 {
+                    c.invert_rect(x as usize, y0.max(0) as usize, 16, (y1 - y0) as usize);
+                }
+            }
+        }
+        // cursor on stock / waste, or the target column while carrying
+        if self.cur < 2 {
+            rc(c, slot(self.cur) - 1, 0, 18, ph + 1);
+        } else if self.hold.is_some() {
+            let x = slot(self.cur - 2);
+            rc(c, x - 1, top - 2, 18, 3);
+        }
+        if self.won() {
+            over_box(c, "YOU WON!");
+        }
+    }
+    fn score(&self) -> u32 { self.found.iter().map(|&n| n as u32).sum::<u32>() * 10 + if self.won() { 200 } else { 0 } }
+    fn over(&self) -> bool { self.won() }
     fn take_sound(&mut self) -> Option<Snd> { self.snd.take() }
 }

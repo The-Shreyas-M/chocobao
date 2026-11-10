@@ -3,7 +3,7 @@
 //   HOME       the logo (chocolate pouring over a bao). BACK opens the menu. Nothing else is reachable here.
 //   MENU       UP/DOWN move, OK opens, BACK goes back. Each entry has an icon and a one-line description.
 //     Utilities  Password maker, Passphrase, PIN maker, Dice and coin, Random number, Stopwatch, Timer, Entropy meter
-//     Games      Mempool Dodger, Snake, Pong, Flappy Bao, Simon, Reaction, ChocoDoom, Magic 8-ball
+//     Games      Mempool Dodger, Snake, Pong, Flappy Bird, Simon, Reaction, Doom, Magic 8-ball
 //     Lab        Button test, Buzzer test, SOS beeps, Sound on/off, Diagnostics
 //     About
 //   Every app shows a short how-to screen the first time it is opened (OK continues, BACK cancels).
@@ -88,7 +88,7 @@ static MAIN_ITEMS: [Item; 5] = [
     it("Lab", &I_FLASK, "Experiments"),
     it("Settings", &I_GEAR, "Saver, sound, tests, about"),
 ];
-static UTIL_ITEMS: [Item; 18] = [
+static UTIL_ITEMS: [Item; 17] = [
     it("Password maker", &I_KEY, "Rules for any website"),
     it("Passphrase", &I_WORDS, "Random words, 11 bits each"),
     it("PIN maker", &I_PIN, "Random digits"),
@@ -102,20 +102,19 @@ static UTIL_ITEMS: [Item; 18] = [
     it("Calculator", &I_BARS, "+ - * / with decimals"),
     it("Unit converter", &I_RANDOM, "km, kg, C/F, inch.."),
     it("Base converter", &I_PIN, "Dec, hex, binary"),
-    it("Metronome", &I_HOURGLASS, "Tempo clicks 30-260"),
     it("Habit counter", &I_BOLT, "Tally four habits"),
     it("Morse trainer", &I_SPEAKER, "Learn and quiz morse"),
     it("Text presets", &I_WORDS, "Hold OK types a text"),
     it("Flashlight", &I_INFO, "White screen, strobe"),
 ];
-static GAME_ITEMS: [Item; 20] = [
+static GAME_ITEMS: [Item; 22] = [
     it("Mempool Dodger", &I_DODGER, "Dodge blocks, grab coins"),
     it("Snake", &I_SNAKE, "Eat, grow, don't crash"),
     it("Pong", &I_PONG, "You vs the computer"),
-    it("Flappy Bao", &I_BIRD, "Fly through the gaps"),
+    it("Flappy Bird", &I_BIRD, "Fly through the gaps"),
     it("Simon", &I_SIMON, "Repeat the arrow pattern"),
     it("Reaction", &I_BOLT, "How fast are you?"),
-    it("ChocoDoom", &I_CROSS, "3D shooter, 5 demons"),
+    it("Doom", &I_CROSS, "3D shooter, 3 levels"),
     it("Pac-Man", &I_PAC, "Eat the dots, dodge ghosts"),
     it("Magic 8-ball", &I_BALL, "Ask a yes/no question"),
     it(crate::games2::NAMES[0], &crate::games2::ICONS[0], crate::games2::DESCS[0]),
@@ -129,11 +128,14 @@ static GAME_ITEMS: [Item; 20] = [
     it(crate::games2::NAMES[8], &crate::games2::ICONS[8], crate::games2::DESCS[8]),
     it(crate::games2::NAMES[9], &crate::games2::ICONS[9], crate::games2::DESCS[9]),
     it(crate::games2::NAMES[10], &crate::games2::ICONS[10], crate::games2::DESCS[10]),
+    it(crate::games2::NAMES[11], &crate::games2::ICONS[11], crate::games2::DESCS[11]),
+    it(crate::games2::NAMES[12], &crate::games2::ICONS[12], crate::games2::DESCS[12]),
 ];
-static MUSIC_ITEMS: [Item; 3] = [
+static MUSIC_ITEMS: [Item; 4] = [
+    it("Closer", &I_SPEAKER, "The Chainsmokers"),
     it("Blinding Lights", &I_SPEAKER, "The Weeknd"),
     it("Attention", &I_SPEAKER, "Charlie Puth"),
-    it("Chord synth", &I_SPEAKER, "4 voices on one pin"),
+    it("Metronome", &I_HOURGLASS, "Tempo clicks, beats"),
 ];
 static LAB_ITEMS: [Item; 5] = [
     it("Mandelbrot", &I_BUN, "Endless fractal zoom"),
@@ -142,10 +144,9 @@ static LAB_ITEMS: [Item; 5] = [
     it("TRNG health", &I_BARS, "Noise picture and tests"),
     it("Notary", &I_KEY, "Sign events, PC verifies"),
 ];
-static SET_ITEMS: [Item; 8] = [
+static SET_ITEMS: [Item; 7] = [
     it("Screensaver", &I_BUN, "Pick what shows when idle"),
     it("Idle time", &I_STOPWATCH, "Seconds before it starts"),
-    it("Invert screen", &I_INFO, "Light on dark or reverse"),
     it("Sound on/off", &I_SPEAKER, "Mute or unmute"),
     it("Buzzer test", &I_SPEAKER, "Plays a C major scale"),
     it("Button test", &I_BUTTON, "Check all 6 buttons"),
@@ -189,9 +190,9 @@ const H_SEED: usize = 17;
 const H_MANDEL: usize = 18;
 const H_CLOCK: usize = 19;
 const H_PLAYER: usize = 21;
-const H_GAME2: usize = 22; // 11 new games: 22..=32
-const H_TOOL0: usize = 33; // 13 tools: 33..=45
-const HELP_COUNT: usize = 46;
+const H_GAME2: usize = 22; // 13 more games: 22..=34
+const H_TOOL0: usize = 35; // 13 tools: 35..=47
+const HELP_COUNT: usize = 48;
 
 fn help_text(id: usize) -> (&'static str, [&'static str; 4]) {
     match id {
@@ -212,10 +213,10 @@ fn help_text(id: usize) -> (&'static str, [&'static str; 4]) {
         x if x == H_GAME => ("Mempool Dodger", ["<> move, hold = glide", "dodge the blocks", "hollow squares = coins", "OK pauses"]),
         x if x == H_GAME + 1 => ("Snake", ["^v<> steer", "eat the hollow squares", "walls and tail hurt", "OK pauses"]),
         x if x == H_GAME + 2 => ("Pong", ["^v move your paddle", "return the ball", "OK pauses", ""]),
-        x if x == H_GAME + 3 => ("Flappy Bao", ["OK or UP flaps", "fly through the gaps", "don't touch anything", ""]),
+        x if x == H_GAME + 3 => ("Flappy Bird", ["OK or UP flaps", "fly through the gaps", "don't touch anything", ""]),
         x if x == H_GAME + 4 => ("Simon", ["watch the arrows", "then repeat them with", "^ v < >", "it grows each round"]),
         x if x == H_GAME + 5 => ("Reaction", ["wait for GO!", "then press OK fast", "pressing early loses", ""]),
-        x if x == H_GAME + 6 => ("ChocoDoom", ["^v  walk fwd / back", "<>  turn (hold)", "OK  shoot", "kill all 5 demons"]),
+        x if x == H_GAME + 6 => ("Doom", ["^v  walk fwd / back", "<>  turn (hold)", "OK  shoot", "kill every demon"]),
         x if x == H_GAME + 7 => ("Pac-Man", ["^v<> steer (it remembers)", "eat every dot", "o = power: eat ghosts", "OK pauses"]),
         _ => ("Magic 8-ball", ["think of a question", "press OK", "", ""]),
     }
@@ -347,9 +348,9 @@ fn parent(s: &Screen) -> Screen {
         }
         Screen::Game { idx, .. } => Screen::Menu(MenuId::Games, *idx),
         Screen::Ball(_) => Screen::Menu(MenuId::Games, 8),
-        Screen::ButtonTest => Screen::Menu(MenuId::Settings, 5),
-        Screen::Diag => Screen::Menu(MenuId::Settings, 6),
-        Screen::About => Screen::Menu(MenuId::Settings, 7),
+        Screen::ButtonTest => Screen::Menu(MenuId::Settings, 4),
+        Screen::Diag => Screen::Menu(MenuId::Settings, 5),
+        Screen::About => Screen::Menu(MenuId::Settings, 6),
     }
 }
 
@@ -404,6 +405,8 @@ struct App {
     last_input: Instant,
     saver: Option<Instant>,
     saver_kind: usize,
+    saver_track: usize,
+    quit_ask: bool, // Button test / Button scope: BACK is a tested button, so quitting needs a second BACK
     idle_s: u64,
     invert: bool,
     clock: (u32, Instant),
@@ -461,6 +464,8 @@ fn run(rx: Receiver<Input>) {
         last_input: Instant::now(),
         saver: None,
         saver_kind: 0,
+        saver_track: 0,
+        quit_ask: false,
         idle_s: 45,
         invert: false,
         clock: (12 * 3600, Instant::now()),
@@ -626,6 +631,7 @@ impl App {
         if self.saver.is_some() {
             // any button wakes the screen; the press itself is swallowed and everything resumes where it was
             self.saver = None;
+            self.snd.silence();
             self.dirty = true;
             return;
         }
@@ -658,7 +664,19 @@ impl App {
     }
 
     fn on_press(&mut self, b: Btn) {
+        let testing = matches!(self.screen, Screen::ButtonTest)
+            || matches!(&self.screen, Screen::Tool(t) if t.kind == crate::tools2::Kind::Scope);
+        if b != Btn::Back && self.quit_ask {
+            self.quit_ask = false;
+            self.dirty = true;
+        }
+        if b == Btn::Back && testing && !self.quit_ask {
+            self.quit_ask = true; // BACK is shown as a pressed button first; a second BACK quits
+            self.dirty = true;
+            return;
+        }
         if b == Btn::Back {
+            self.quit_ask = false;
             // in a game: first BACK pauses, the second BACK quits
             if let Screen::Game { g, .. } = &mut self.screen {
                 if g.can_pause() && !g.over() && !g.is_paused() {
@@ -1048,17 +1066,16 @@ impl App {
             (MenuId::Utilities, 10) => self.open_tool(crate::tools2::Kind::Calc),
             (MenuId::Utilities, 11) => self.open_tool(crate::tools2::Kind::Units),
             (MenuId::Utilities, 12) => self.open_tool(crate::tools2::Kind::Base),
-            (MenuId::Utilities, 13) => self.open_tool(crate::tools2::Kind::Metro),
-            (MenuId::Utilities, 14) => self.open_tool(crate::tools2::Kind::Habit),
-            (MenuId::Utilities, 15) => self.open_tool(crate::tools2::Kind::Morse),
-            (MenuId::Utilities, 16) => self.open_tool(crate::tools2::Kind::Typer),
-            (MenuId::Utilities, 17) => self.open_tool(crate::tools2::Kind::Flash),
-            (MenuId::Music, 2) => self.open_tool(crate::tools2::Kind::Synth),
+            (MenuId::Utilities, 13) => self.open_tool(crate::tools2::Kind::Habit),
+            (MenuId::Utilities, 14) => self.open_tool(crate::tools2::Kind::Morse),
+            (MenuId::Utilities, 15) => self.open_tool(crate::tools2::Kind::Typer),
+            (MenuId::Utilities, 16) => self.open_tool(crate::tools2::Kind::Flash),
+            (MenuId::Music, 3) => self.open_tool(crate::tools2::Kind::Metro),
             (MenuId::Lab, 2) => self.open_tool(crate::tools2::Kind::Scope),
             (MenuId::Lab, 3) => self.open_tool(crate::tools2::Kind::Health),
             (MenuId::Lab, 4) => self.open_tool(crate::tools2::Kind::Notary),
-            (MenuId::Games, i) if i >= 9 && i < 20 => self.open_game2(i - 9),
-            (MenuId::Music, 0) | (MenuId::Music, 1) => {
+            (MenuId::Games, i) if i >= 9 && i < 22 => self.open_game2(i - 9),
+            (MenuId::Music, 0) | (MenuId::Music, 1) | (MenuId::Music, 2) => {
                 self.snd.silence();
                 self.open(H_PLAYER, Screen::Player { idx: sel, playing: false })
             }
@@ -1075,21 +1092,16 @@ impl App {
                 self.toast(&msg);
             }
             (MenuId::Settings, 2) => {
-                self.invert = !self.invert;
-                self.dirty = true;
-                self.toast(if self.invert { "inverted" } else { "normal" });
-            }
-            (MenuId::Settings, 3) => {
                 let on = self.snd.toggle();
                 self.toast(if on { "sound ON" } else { "sound OFF" });
             }
-            (MenuId::Settings, 4) => {
+            (MenuId::Settings, 3) => {
                 self.snd.play(sound::SCALE);
                 self.toast("playing a scale");
             }
-            (MenuId::Settings, 5) => self.goto(Screen::ButtonTest),
-            (MenuId::Settings, 6) => self.goto(Screen::Diag),
-            (MenuId::Settings, 7) => self.goto(Screen::About),
+            (MenuId::Settings, 4) => self.goto(Screen::ButtonTest),
+            (MenuId::Settings, 5) => self.goto(Screen::Diag),
+            (MenuId::Settings, 6) => self.goto(Screen::About),
             _ => {}
         }
     }
@@ -1128,7 +1140,8 @@ impl App {
         // screensaver: after SAVER_S seconds without a button the screen goes to a moving bun, and games pause
         let idle_ok = !matches!(self.screen, Screen::Boot(_))
             && !matches!(self.screen, Screen::Timer { running: true, .. })
-            && !matches!(self.screen, Screen::Timer { done: true, .. });
+            && !matches!(self.screen, Screen::Timer { done: true, .. })
+            && !matches!(self.screen, Screen::Player { playing: true, .. }); // a song plays to its end first
         if self.saver.is_none() && idle_ok && self.idle_s > 0 && now.duration_since(self.last_input) > Duration::from_secs(self.idle_s) {
             self.saver = Some(now);
             if let Screen::Game { g, .. } = &mut self.screen {
@@ -1139,7 +1152,19 @@ impl App {
             self.snd.silence();
             self.dirty = true;
         }
+        if let Screen::Player { playing, .. } = &mut self.screen {
+            if *playing && !self.snd.tune_active() {
+                *playing = false; // the song finished
+                self.dirty = true;
+            }
+        }
         if self.saver.is_some() {
+            // the screensaver plays the songs one after the other: Closer, Blinding Lights, Attention, and again
+            if !self.snd.tune_active() && self.snd.enabled.load(std::sync::atomic::Ordering::Relaxed) {
+                let n = crate::music::TUNES.len();
+                self.snd.tune_fat(Some(crate::music::TUNES[self.saver_track % n].notes));
+                self.saver_track += 1;
+            }
             if now.duration_since(self.anim_at) >= Duration::from_millis(60) {
                 self.anim_at = now;
                 self.dirty = true;
@@ -1388,11 +1413,11 @@ impl App {
                 let s = (self.clock.0 + self.clock.1.elapsed().as_secs() as u32) % day;
                 oled.card(0, 0, 128, 13);
                 oled.text(4, 0, "Clock");
-                oled.text(128 - 6 * 9, 0, if *edit { "SET: ^v <>" } else { "OK = set" });
-                oled.inset(0, 16, 128, 34);
-                oled.text_big(10, 22, &format!("{:02}:{:02}", s / 3600, (s / 60) % 60), 3);
-                oled.text(112, 40, &format!("{:02}", s % 60));
-                oled.text(0, 54, if *edit { "OK = done" } else { "starts 12:00 at boot" });
+                oled.text(128 - 6 * 11, 0, if *edit { "SET: ^v <>" } else { "OK = set" });
+                oled.inset(0, 14, 128, 38);
+                oled.text_big(6, 15, &format!("{:02}:{:02}", s / 3600, (s / 60) % 60), 3);
+                oled.text(104, 36, &format!("{:02}", s % 60));
+                oled.text(0, 52, if *edit { "OK = done" } else { "starts 12:00 at boot" });
             }
             Screen::Player { idx, playing } => {
                 let t = &crate::music::TUNES[*idx];
@@ -1452,7 +1477,7 @@ impl App {
                 let t = *acc + if *running { started.elapsed() } else { Duration::ZERO };
                 oled.text(0, 0, "Stopwatch");
                 oled.text_big(4, 18, &fmt_time(t), 2);
-                oled.text(0, 52, "OK start/stop  UP reset");
+                oled.text(0, 52, "OK go/stop  UP reset");
             }
             Screen::Timer { set_s, running, end, left_ms, done } => {
                 oled.text(0, 0, "Timer");
@@ -1464,7 +1489,7 @@ impl App {
                     *set_s * 1000
                 };
                 let secs = (ms + 999) / 1000;
-                oled.text_big(14, 18, &format!("{:02}:{:02}", secs / 60, secs % 60), 3);
+                oled.text_big(14, 14, &format!("{:02}:{:02}", secs / 60, secs % 60), 3);
                 let hint = if *done {
                     "TIME'S UP!  OK=reset"
                 } else if *running {
@@ -1508,12 +1533,13 @@ impl App {
                 }
             }
             Screen::ButtonTest => {
-                oled.text(0, 0, "Button test (BACK exits)");
-                for i in 0..5 {
+                oled.text(0, 0, "Button test");
+                for i in 0..6 {
                     let (col, row) = (i / 3, i % 3);
                     let state = if self.down[i] { "ON" } else { "--" };
                     oled.text(col * 66, 13 + 13 * row, &format!("{:<5}{}", BTN_NAMES[i], state));
                 }
+                oled.text(0, 52, "BACK twice = quit");
             }
             Screen::Diag => {
                 let (ok, bad, slow) = disp.stats();
@@ -1532,6 +1558,12 @@ impl App {
                 oled.text(0, 39, "RISC-V, 4 BIO, TRNG");
                 oled.text(0, 52, &format!("up {}m {}s", secs / 60, secs % 60));
             }
+        }
+        if self.quit_ask {
+            oled.fill_rect(8, 20, 112, 24, false);
+            oled.rect(8, 20, 112, 24);
+            oled.text(14, 23, "Quit this test?");
+            oled.text(14, 33, "BACK again = yes");
         }
         // short wipe from the previous picture to the new one
         if let Some(t0) = self.wipe_from {

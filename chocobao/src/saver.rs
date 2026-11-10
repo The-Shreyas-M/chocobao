@@ -2,10 +2,9 @@
 // no pixel stays on (OLED burn-in). `kind` is chosen in Settings > Screensaver.
 use crate::oled::Canvas;
 
-pub const NAMES: [&str; 6] = ["Drifting bun", "Auto Pong", "Eyes", "Escape artist", "Bao and bar", "Surprise me"];
+pub const NAMES: [&str; 4] = ["Auto Pong", "Eyes", "Escape artist", "Bao and bar"];
 pub const COUNT: usize = NAMES.len();
 
-const I_BUN: [u8; 8] = [0x18, 0x3C, 0x7E, 0xFF, 0xFF, 0xFF, 0x7E, 0xFF];
 
 /// Triangle wave 0..=span that bounces back and forth as `t` grows.
 fn tri(t: u32, span: u32) -> i32 {
@@ -22,12 +21,10 @@ fn hash(n: u32) -> u32 {
 
 pub fn draw(c: &mut Canvas, kind: usize, t: u32) {
     match kind {
-        0 => c.icon(tri(t / 110, 118) as usize, tri(t / 170, 54) as usize, &I_BUN),
-        1 => pong(c, t),
-        2 => eyes(c, t),
-        3 => walker(c, t),
-        4 => bao_bar(c, t),
-        _ => draw(c, ((t / 60_000) % 5) as usize, t),
+        0 => pong(c, t),
+        1 => eyes(c, t),
+        2 => walker(c, t),
+        _ => bao_bar(c, t),
     }
 }
 

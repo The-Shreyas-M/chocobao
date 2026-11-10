@@ -118,6 +118,8 @@ def main():
             j += 1
         mono.append(best)
         i = j if j > i + 1 else i + 1
+    # a note ends when the next one starts (sustained / pedalled notes would otherwise overlap and stretch the tune)
+    mono = [(s, min(e, mono[k + 1][0]) if k + 1 < len(mono) and mono[k + 1][0] > s else e, n) for k, (s, e, n) in enumerate(mono)]
     out, prev_end = [], None
     for s, e, n in mono:
         n += a.transpose
@@ -138,7 +140,7 @@ def main():
         k = -(-dur // a.max_ms)
         for q in range(k):
             out.append((round(hz) if q == k - 1 else f'TIE | {round(hz)}', round(dur / k)))
-        prev_end = t1
+        prev_end = max(t1, t0 + 40)
     print(f'pub const {a.name}: &[Note] = &[')
     line = '   '
     for hz, ms in out:

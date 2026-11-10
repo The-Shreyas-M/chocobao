@@ -1,5 +1,5 @@
-// doom.rs - "ChocoDoom": a tiny first-person shooter for the 128x64 OLED (a ray-casting engine like the one
-// in Wolfenstein 3D). One level, five demons. UP/DOWN walk, LEFT/RIGHT turn (hold), OK fires.
+// doom.rs - "Doom": a tiny first-person shooter for the 128x64 OLED (a ray-casting engine like the one
+// in Wolfenstein 3D). One level, laid out like the first level of the original (E1M1, the hangar), six demons. UP/DOWN walk, LEFT/RIGHT turn (hold), OK fires.
 //
 // Why not real DOOM? Its game data (WAD, about 4 MB) is bigger than the whole app region of this board (about
 // 0.87 MB) and the engine wants several MB of RAM; the chip has 2 MiB shared with the OS. This engine keeps the
@@ -16,23 +16,24 @@ use crate::oled::Canvas;
 
 const MAP: [&str; 16] = [
     "################",
+    "#.......#......#",
+    "#.......#..##..#",
+    "#.......#..##..#",
+    "#...##.........#",
+    "#...##..#......#",
+    "#.......#####.##",
+    "#.......#......#",
+    "###.#####......#",
     "#..............#",
-    "#.####....####.#",
-    "#.#..........#.#",
-    "#.#..######..#.#",
-    "#....#....#....#",
-    "#.#..#....#..#.#",
-    "#.#..##..##..#.#",
-    "#.#..........#.#",
-    "#.####....####.#",
-    "#..............#",
-    "#...##....##...#",
-    "#...#......#...#",
-    "#...#......#...#",
+    "#.####..####...#",
+    "#.#..#..#..#...#",
+    "#.#..#..#..#...#",
+    "#.#..#..#..#...#",
     "#..............#",
     "################",
 ];
 
+// level 2 and 3: tighter corridors and more demons (OK after a win starts the next level)
 const MAP2: [&str; 16] = [
     "################",
     "#......#.......#",
@@ -51,19 +52,41 @@ const MAP2: [&str; 16] = [
     "#.##########...#",
     "################",
 ];
-
+const MAP3: [&str; 16] = [
+    "################",
+    "#....#.....#...#",
+    "#.##.#.###.#.#.#",
+    "#.#..#.#.#...#.#",
+    "#.#.##.#.#####.#",
+    "#.#....#.......#",
+    "#.######.#####.#",
+    "#........#...#.#",
+    "#.########.#.#.#",
+    "#.#......#.#.#.#",
+    "#.#.#.##.#.#...#",
+    "#...#..#.#.#####",
+    "#####..#.#.....#",
+    "#......#.#####.#",
+    "#.######.......#",
+    "################",
+];
 static LEVEL: AtomicUsize = AtomicUsize::new(0);
-static NEXT_LEVEL: AtomicUsize = AtomicUsize::new(0);
 
 fn map() -> &'static [&'static str; 16] {
-    if LEVEL.load(Ordering::Relaxed) == 1 { &MAP2 } else { &MAP }
+    match LEVEL.load(Ordering::Relaxed) {
+        1 => &MAP2,
+        2 => &MAP3,
+        _ => &MAP,
+    }
 }
 
 const NCOL: usize = 64; // rays per frame, each drawn 2 pixels wide
 const VIEW_TOP: i32 = 12;
 const VIEW_H: i32 = 52;
-const TURN_MAX: f32 = 2.6; // rad/s
-const TURN_ACC: f32 = 16.0; // rad/s^2 (reaches full speed in ~0.16 s, stops as fast)
+const TURN_MIN: f32 = 0.8; // rad/s the moment LEFT/RIGHT goes down (fine aiming)
+const TURN_MAX: f32 = 2.0; // rad/s after the key was held for TURN_RAMP seconds
+const TURN_RAMP: f32 = 0.5;
+const TURN_ACC: f32 = 14.0; // rad/s^2
 const MOVE_MAX: f32 = 2.6; // map units/s
 const MOVE_ACC: f32 = 18.0;
 const FIRE_CD: f32 = 0.16; // seconds between shots
@@ -87,10 +110,11 @@ pub struct Doom {
     flash: f32,
     hurt_cd: f32,
     turn_v: f32,
+    turn_held: f32,
+    level: usize,
     move_v: f32,
     fire_held: bool,
     born: Instant,
-    level: usize,
     alive: bool,
     won: bool,
     paused: bool,
@@ -112,19 +136,17 @@ fn is_wall(x: f32, y: f32) -> bool {
 
 impl Doom {
     pub fn new(_trng: &Trng) -> Self {
-        let level = NEXT_LEVEL.load(Ordering::Relaxed);
-        LEVEL.store(level, Ordering::Relaxed);
-        let spots: Vec<(f32, f32)> = if level == 0 {
-            vec![(13.5, 1.5), (13.5, 13.5), (8.0, 8.0), (1.5, 13.5), (8.0, 5.0)]
-        } else {
-            vec![(13.5, 1.5), (13.5, 13.5), (8.5, 5.5), (5.5, 11.5), (9.5, 9.5), (4.5, 5.5), (13.5, 7.5)]
+        let level = LEVEL.load(Ordering::Relaxed) % 3;
+        let (spots, start): (Vec<(f32, f32)>, (f32, f32)) = match level {
+            0 => (vec![(13.5, 2.5), (4.5, 2.5), (13.5, 9.5), (7.5, 5.5), (10.5, 13.5), (13.5, 7.5)], (1.5, 14.5)),
+            1 => (vec![(13.5, 1.5), (13.5, 13.5), (8.5, 5.5), (5.5, 11.5), (9.5, 9.5), (4.5, 5.5), (13.5, 7.5)], (1.5, 1.5)),
+            _ => (vec![(13.5, 1.5), (9.5, 1.5), (13.5, 7.5), (4.5, 8.5), (1.5, 13.5), (9.5, 13.5), (13.5, 13.5), (5.5, 5.5)], (1.5, 1.5)),
         };
         Doom {
             born: Instant::now(),
-            level,
-            px: 1.5,
-            py: 1.5,
-            a: 0.6,
+            px: start.0,
+            py: start.1,
+            a: if level == 0 { -0.5 } else { 0.6 },
             hp: 5,
             kills: 0,
             enemies: spots.iter().map(|&(x, y)| Enemy { x, y, hp: 2 }).collect(),
@@ -134,6 +156,8 @@ impl Doom {
             flash: 0.0,
             hurt_cd: 0.0,
             turn_v: 0.0,
+            turn_held: 0.0,
+            level,
             move_v: 0.0,
             fire_held: false,
             alive: true,
@@ -253,7 +277,14 @@ impl Game for Doom {
                 target
             }
         };
-        self.turn_v = approach(self.turn_v, self.turn as f32 * TURN_MAX, TURN_ACC);
+        // turning starts gently (easy to aim) and speeds up while the key stays down
+        if self.turn != 0 {
+            self.turn_held = (self.turn_held + dt).min(TURN_RAMP);
+        } else {
+            self.turn_held = 0.0;
+        }
+        let speed = TURN_MIN + (TURN_MAX - TURN_MIN) * self.turn_held / TURN_RAMP;
+        self.turn_v = approach(self.turn_v, self.turn as f32 * speed, TURN_ACC);
         self.move_v = approach(self.move_v, self.fwd as f32 * MOVE_MAX, MOVE_ACC);
         let mut changed = self.turn_v != 0.0 || self.move_v != 0.0;
         self.a += self.turn_v * dt;
@@ -309,34 +340,35 @@ impl Game for Doom {
         } else if self.enemies.iter().all(|e| e.hp <= 0) {
             self.alive = false;
             self.won = true;
-            NEXT_LEVEL.store(1 - self.level, Ordering::Relaxed); // OK after winning starts the other level
+            LEVEL.store((self.level + 1) % 3, Ordering::Relaxed);
             changed = true;
         }
         changed || self.fire_cd > 0.0
     }
 
     fn draw(&self, c: &mut Canvas, _best: u32) {
-        c.text(0, 0, &format!("L{} HP {} KILLS {}/{}", self.level + 1, self.hp.max(0), self.kills, self.enemies.len()));
+        c.text(0, 0, &format!("E1M{} HP {} KILLS {}/{}", self.level + 1, self.hp.max(0), self.kills, self.enemies.len()));
         let (dx, dy) = (self.a.cos(), self.a.sin());
         let (plx, ply) = (-dy * 0.66, dx * 0.66);
         let mid = VIEW_TOP + VIEW_H / 2;
-        // ---- floor and ceiling: dither that gets denser towards the viewer
+        // ---- floor and ceiling: a light dither, denser towards the viewer (kept cheap so the frame rate stays high)
         for y in VIEW_TOP..64 {
             let dist = (y - mid).abs();
             if dist < 2 {
                 continue;
             }
-            for x in 0..128i32 {
-                let on = if y > mid {
-                    if dist < 6 { (x & 3 == 0) && (y & 3 == 0) } else if dist < 14 { (x + y) & 3 == 0 } else if dist < 24 { (x + y) & 1 == 0 && (x & 1 == 0) } else { (x + y) & 1 == 0 }
-                } else if dist < 12 {
-                    (x & 3 == 0) && (y & 3 == 0)
-                } else {
-                    false
-                };
-                if on {
-                    c.dot(x, y, true);
-                }
+            let (stride, on_row) = if y > mid {
+                if dist < 8 { (4, y & 3 == 0) } else if dist < 18 { (4, y & 1 == 0) } else { (2, true) }
+            } else {
+                (4, dist < 12 && y & 3 == 0)
+            };
+            if !on_row {
+                continue;
+            }
+            let mut x = if (y / 2) & 1 == 0 { 0 } else { stride / 2 };
+            while x < 128 {
+                c.dot(x, y, true);
+                x += stride;
             }
         }
         let mut zbuf = [20.0f32; NCOL];
@@ -372,18 +404,12 @@ impl Game for Doom {
             let level = if perp < 1.6 { 0 } else if perp < 3.2 { 1 } else if perp < 5.5 { 2 } else { 3 };
             let level = if side == 1 && level < 3 { level + 1 } else { level };
             let x = (col * 2) as i32;
-            // brick texture: where along the wall did the ray hit
-            let wallx = if side == 0 { self.py + perp * rdy } else { self.px + perp * rdx };
-            let tex_x = (((wallx - wallx.floor()) * 8.0) as i32) & 7;
-            let top_y = mid - h / 2;
-            for y in y0..=y1 {
-                let ty = ((y - top_y) * 8 / h.max(1)).max(0);
-                let mortar = ty % 4 == 0 || (tex_x + (ty / 4) * 4) % 8 == 0;
-                for xx in x..x + 2 {
-                    if y == y0 || y == y1 {
-                        c.dot(xx, y, true);
-                    } else if !mortar || level >= 2 {
-                        if shade(level, xx, y) {
+            if level == 0 {
+                c.fill_rect(x as usize, y0 as usize, 2, (y1 - y0 + 1).max(1) as usize, true);
+            } else {
+                for y in y0..=y1 {
+                    for xx in x..x + 2 {
+                        if y == y0 || y == y1 || shade(level, xx, y) {
                             c.dot(xx, y, true);
                         }
                     }

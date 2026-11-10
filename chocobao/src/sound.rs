@@ -98,6 +98,16 @@ pub struct Sound {
 }
 
 impl Sound {
+    /// A silent Sound that has no thread and never touches the BIO (safe mode).
+    pub fn disabled() -> Sound {
+        let (tx, _rx) = channel();
+        Sound {
+            tx,
+            enabled: Arc::new(AtomicBool::new(false)),
+            status: Arc::new(Mutex::new(String::from("off (safe mode)"))),
+        }
+    }
+
     pub fn start() -> Sound {
         let (tx, rx) = channel();
         let enabled = Arc::new(AtomicBool::new(true));

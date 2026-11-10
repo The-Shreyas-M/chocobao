@@ -1,0 +1,62 @@
+diff --git a/libs/bao1x-hal/src/udma/i2c.rs b/libs/bao1x-hal/src/udma/i2c.rs
+index 8ab0fa8..e9e7930 100644
+--- a/libs/bao1x-hal/src/udma/i2c.rs
++++ b/libs/bao1x-hal/src/udma/i2c.rs
+@@ -228,7 +228,10 @@ impl<'a> I2cDriver<'a> {
+         unsafe {
+             self.udma_enqueue(Bank::Custom, &self.cmd_buf_phys[..cmds.len()], CFG_EN);
+         }
+-        while self.udma_busy(Bank::Custom) {}
++        let mut guard = 0u32;
++        while self.udma_busy(Bank::Custom) && guard < 3_000_000 {
++            guard += 1;
++        }
+     }
+ 
+     fn push_cmd(&mut self, cmd: I2cCmd) {
+@@ -430,10 +433,19 @@ impl<'a> I2cDriver<'a> {
+             self.udma_enqueue(Bank::Custom, &self.cmd_buf_phys[..self.seq_len], CFG_EN);
+         }
+         // wait for the commands to propagate before returning
++        // ChocoBao patch: this wait used to be unbounded. If the service thread was preempted just while the
++        // controller finished the last byte, BUSY was never seen set again and the loop spun forever, wedging
++        // every I2C user. Bounded now; i2c_await() below copes with an already-finished transfer.
+         #[cfg(not(feature = "mpw"))]
+-        while self.csr.rf(utra::udma_i2c_0::REG_STATUS_R_BUSY) == 0
+-            || self.csr.rf(utra::udma_i2c_0::REG_CMD_SIZE_R_CMD_SIZE) != 0
+-        {}
++        {
++            let mut guard = 0u32;
++            while (self.csr.rf(utra::udma_i2c_0::REG_STATUS_R_BUSY) == 0
++                || self.csr.rf(utra::udma_i2c_0::REG_CMD_SIZE_R_CMD_SIZE) != 0)
++                && guard < 3_000_000
++            {
++                guard += 1;
++            }
++        }
+         #[cfg(feature = "mpw")]
+         while self.csr.rf(utra::udma_i2c_0::REG_STATUS_R_BUSY) == 0 {}
+         self.pending = I2cPending::Write(data.len());
+@@ -495,10 +507,19 @@ impl<'a> I2cDriver<'a> {
+             self.udma_enqueue(Bank::Custom, &self.cmd_buf_phys[..self.seq_len], CFG_EN);
+         }
+         // wait for the commands to propagate before returning
++        // ChocoBao patch: this wait used to be unbounded. If the service thread was preempted just while the
++        // controller finished the last byte, BUSY was never seen set again and the loop spun forever, wedging
++        // every I2C user. Bounded now; i2c_await() below copes with an already-finished transfer.
+         #[cfg(not(feature = "mpw"))]
+-        while self.csr.rf(utra::udma_i2c_0::REG_STATUS_R_BUSY) == 0
+-            || self.csr.rf(utra::udma_i2c_0::REG_CMD_SIZE_R_CMD_SIZE) != 0
+-        {}
++        {
++            let mut guard = 0u32;
++            while (self.csr.rf(utra::udma_i2c_0::REG_STATUS_R_BUSY) == 0
++                || self.csr.rf(utra::udma_i2c_0::REG_CMD_SIZE_R_CMD_SIZE) != 0)
++                && guard < 3_000_000
++            {
++                guard += 1;
++            }
++        }
+         #[cfg(feature = "mpw")]
+         while self.csr.rf(utra::udma_i2c_0::REG_STATUS_R_BUSY) == 0 {}
+         self.pending = I2cPending::Read(len);

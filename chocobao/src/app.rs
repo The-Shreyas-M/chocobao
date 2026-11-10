@@ -32,7 +32,7 @@ use crate::rng;
 use crate::logo;
 use crate::sound::{self, Sound};
 
-const TICK_MS: u64 = 10;
+const TICK_MS: u64 = 16;
 const WATCHDOG_MS: u32 = 20_000; // only a truly dead display bus should restart the app
 
 #[derive(Clone, Copy, PartialEq)]
@@ -158,8 +158,20 @@ fn run(rx: Receiver<Input>) {
     tt.sleep_ms(3500).ok(); // let USB, the console and the I2C service start
     let trng = Trng::new(&xns).unwrap();
     let usb = UsbHid::new();
-    let display = Display::start();
-    let snd = Sound::start();
+    // Safe-mode switches, read from buttons held while the device boots (see HANDOFF.md):
+    //   hold BACK = no display and no sound (nothing touches I2C or the BIO), hold DOWN = no sound only.
+    let mut held = [false; 6];
+    while let Ok(i) = rx.try_recv() {
+        match i {
+            Input::Press(b) => held[bidx(b)] = true,
+            Input::Release(b, _) => held[bidx(b)] = false,
+        }
+    }
+    let no_display = held[bidx(Btn::Back)];
+    let no_sound = no_display || held[bidx(Btn::Down)];
+    crate::diag::MODE.store(no_display as u32 | (no_sound as u32) << 1, Ordering::Relaxed);
+    let display = if no_display { None } else { Display::start() };
+    let snd = if no_sound { Sound::disabled() } else { Sound::start() };
     log::info!("app started, display {}", if display.is_some() { "found" } else { "not found" });
     let mut app = App {
         display,
@@ -172,7 +184,7 @@ fn run(rx: Receiver<Input>) {
         ok_gen: u32::MAX,
         status: String::new(),
         started: Instant::now(),
-        down: [false; 6],
+        down: held,
         best: [0; 8],
         sound_done: false,
         anim_at: Instant::now(),
@@ -642,7 +654,7 @@ impl App {
                 }
             }
             Screen::Home => {
-                if now.duration_since(self.anim_at) >= Duration::from_millis(130) {
+                if now.duration_since(self.anim_at) >= Duration::from_millis(250) {
                     self.anim_at = now;
                     self.dirty = true;
                 }

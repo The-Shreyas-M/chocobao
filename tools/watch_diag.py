@@ -20,7 +20,7 @@ from serial.tools import list_ports
 
 APP_PID = 0x6197
 LOG = pathlib.Path(__file__).resolve().parent.parent / "diag_log.txt"
-PAT = re.compile(r"DIAG up=(\d+) ticks=(\d+) loopmax=(\d+) push=(\d+) fail=(\d+) pushmax=(\d+) stuck=(\d+) panic=(\d+) wd=(\d+) scr=(\d+) btn=(\d+)")
+PAT = re.compile(r"DIAG up=(\d+) ticks=(\d+) loopmax=(\d+) push=(\d+) fail=(\d+) pushmax=(\d+) stuck=(\d+) panic=(\d+) wd=(\d+) scr=(\d+) btn=(\d+) mode=(\d+)")
 
 
 def find_port():
@@ -88,7 +88,7 @@ def main():
             if m:
                 v = list(map(int, m))
                 last = v
-                log("up=%ds ticks=%d loopmax=%dms push=%d fail=%d pushmax=%dms stuck=%dms panic=%d wd=%d scr=%d btn=%d"
+                log("up=%ds ticks=%d loopmax=%dms push=%d fail=%d pushmax=%dms stuck=%dms panic=%d wd=%d scr=%d btn=%d mode=%d"
                     % (v[0] // 1000, *v[1:]))
             else:
                 log("no answer to diag (console busy or app frozen?)")

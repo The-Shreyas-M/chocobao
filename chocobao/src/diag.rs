@@ -13,6 +13,7 @@ pub static STUCK_MS: AtomicU32 = AtomicU32::new(0); // how long the current OLED
 pub static PANICS: AtomicU32 = AtomicU32::new(0); // panics caught by the app loop
 pub static WD_TRIPS: AtomicU32 = AtomicU32::new(0); // times the display watchdog fired
 pub static SCREEN: AtomicU32 = AtomicU32::new(0); // which screen is showing (see app.rs screen_code)
+pub static MODE: AtomicU32 = AtomicU32::new(0); // bit0 = display off, bit1 = sound off (safe-mode switches)
 pub static BTN_EVENTS: AtomicU32 = AtomicU32::new(0); // button events received
 
 static START: OnceLock<Instant> = OnceLock::new();
@@ -32,7 +33,7 @@ pub fn max(a: &AtomicU32, v: u32) {
 /// One line, easy to parse: `DIAG up=1234 ticks=.. ...`
 pub fn line() -> String {
     format!(
-        "DIAG up={} ticks={} loopmax={} push={} fail={} pushmax={} stuck={} panic={} wd={} scr={} btn={}",
+        "DIAG up={} ticks={} loopmax={} push={} fail={} pushmax={} stuck={} panic={} wd={} scr={} btn={} mode={}",
         uptime_ms(),
         TICKS.load(Relaxed),
         LOOP_MAX_MS.load(Relaxed),
@@ -44,5 +45,6 @@ pub fn line() -> String {
         WD_TRIPS.load(Relaxed),
         SCREEN.load(Relaxed),
         BTN_EVENTS.load(Relaxed),
+        MODE.load(Relaxed),
     )
 }

@@ -13,8 +13,8 @@ use std::time::{Duration, Instant};
 
 use crate::oled::{Canvas, Frame, Panel, H, W};
 
-const REFRESH_MS: u32 = 2000; // full resend (no display-off) to heal any glitch
-const MIN_GAP_MS: u32 = 40; // at most 25 pushes per second
+const REFRESH_MS: u32 = 10_000; // full resend (no display-off) to heal any glitch
+const MIN_GAP_MS: u32 = 50; // at most 20 pushes per second
 const REINIT_AFTER_FAILS: u32 = 3;
 
 struct Shared {
@@ -150,6 +150,6 @@ fn thread_main(sh: Arc<Shared>, ready: std::sync::mpsc::Sender<bool>) {
             log::error!("display thread panic caught");
             sh.busy_since.store(0, Ordering::SeqCst);
         }
-        tt.sleep_ms(10).ok();
+        tt.sleep_ms(20).ok();
     }
 }

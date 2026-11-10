@@ -85,7 +85,7 @@ static MAIN_ITEMS: [Item; 4] = [
     it("Lab", &I_FLASK, "Tests and experiments"),
     it("About", &I_INFO, "Version and chip facts"),
 ];
-static UTIL_ITEMS: [Item; 8] = [
+static UTIL_ITEMS: [Item; 9] = [
     it("Password maker", &I_KEY, "Rules for any website"),
     it("Passphrase", &I_WORDS, "Random words, 11 bits each"),
     it("PIN maker", &I_PIN, "Random digits"),
@@ -94,6 +94,7 @@ static UTIL_ITEMS: [Item; 8] = [
     it("Stopwatch", &I_STOPWATCH, "Start, stop, reset"),
     it("Timer", &I_HOURGLASS, "Countdown with alarm"),
     it("Entropy meter", &I_BARS, "Live check of the TRNG"),
+    it("Seed words", &I_WORDS, "Valid BIP-39, 12-24 words"),
 ];
 static GAME_ITEMS: [Item; 9] = [
     it("Mempool Dodger", &I_DODGER, "Dodge blocks, grab coins"),
@@ -142,7 +143,8 @@ const H_STOP: usize = 5;
 const H_TIMER: usize = 6;
 const H_ENT: usize = 7;
 const H_GAME: usize = 8; // + game index (0..=7, 8 = Magic 8-ball)
-const HELP_COUNT: usize = 17;
+const H_SEED: usize = 17;
+const HELP_COUNT: usize = 18;
 
 fn help_text(id: usize) -> (&'static str, [&'static str; 4]) {
     match id {
@@ -154,6 +156,7 @@ fn help_text(id: usize) -> (&'static str, [&'static str; 4]) {
         H_STOP => ("Stopwatch", ["OK  start / stop", "UP  reset to zero", "", ""]),
         H_TIMER => ("Timer", ["<>  +/- 10 seconds", "^v  +/- 1 minute", "OK  start / pause", "alarm when it ends"]),
         H_ENT => ("Entropy meter", ["Counts the 1 bits of", "the hardware random", "generator. Healthy = 50%", "bars about equal"]),
+        H_SEED => ("Seed words", ["<>  12/15/18/21/24", "^v  next / prev page", "OK  new (checksum ok)", "never typed or saved"]),
         x if x == H_GAME => ("Mempool Dodger", ["<> move, hold = glide", "dodge the blocks", "hollow squares = coins", "OK pauses"]),
         x if x == H_GAME + 1 => ("Snake", ["^v<> steer", "eat the hollow squares", "walls and tail hurt", "OK pauses"]),
         x if x == H_GAME + 2 => ("Pong", ["^v move your paddle", "return the ball", "OK pauses", ""]),
@@ -221,6 +224,7 @@ enum Screen {
     Stopwatch { running: bool, started: Instant, acc: Duration },
     Timer { set_s: u32, running: bool, end: Instant, left_ms: u32, done: bool },
     Entropy(Entropy),
+    Seed { n: usize, idx: Vec<u16>, page: usize },
     Game { idx: usize, g: Box<dyn Game> },
     Ball(Option<usize>),
     ButtonTest,
@@ -240,6 +244,7 @@ fn screen_code(s: &Screen) -> u32 {
         Screen::Stopwatch { .. } => 7,
         Screen::Timer { .. } => 8,
         Screen::Entropy(_) => 9,
+        Screen::Seed { .. } => 11,
         Screen::Ball(_) => 10,
         Screen::ButtonTest => 20,
         Screen::Diag => 21,
@@ -267,6 +272,7 @@ fn parent(s: &Screen) -> Screen {
         Screen::Stopwatch { .. } => Screen::Menu(MenuId::Utilities, 5),
         Screen::Timer { .. } => Screen::Menu(MenuId::Utilities, 6),
         Screen::Entropy(_) => Screen::Menu(MenuId::Utilities, 7),
+        Screen::Seed { .. } => Screen::Menu(MenuId::Utilities, 8),
         Screen::Game { idx, .. } => Screen::Menu(MenuId::Games, *idx),
         Screen::Ball(_) => Screen::Menu(MenuId::Games, 8),
         Screen::ButtonTest => Screen::Menu(MenuId::Lab, 0),
@@ -603,6 +609,27 @@ impl App {
                     rep = matches!(b, Btn::Left | Btn::Right);
                 }
             }
+            Screen::Seed { n, idx, page } => {
+                let pages = (*n + 3) / 4;
+                let mut changed = false;
+                match b {
+                    Btn::Up => *page = (*page + pages - 1) % pages,
+                    Btn::Down => *page = (*page + 1) % pages,
+                    Btn::Left | Btn::Right => {
+                        *n = if b == Btn::Left { (*n).saturating_sub(3).max(12) } else { (*n + 3).min(24) };
+                        changed = true;
+                    }
+                    Btn::Ok => changed = true,
+                    _ => {}
+                }
+                if changed {
+                    *idx = rng::seed_words(&self.trng, *n).unwrap_or_default();
+                    *page = 0;
+                }
+                redraw = matches!(b, Btn::Up | Btn::Down | Btn::Left | Btn::Right | Btn::Ok);
+                click = matches!(b, Btn::Up | Btn::Down);
+                rep = matches!(b, Btn::Left | Btn::Right);
+            }
             Screen::Dice { p, cur } => match b {
                 Btn::Up => {
                     *p = (*p + DICE.len() - 1) % DICE.len();
@@ -820,6 +847,10 @@ impl App {
             ),
             (MenuId::Utilities, 7) => {
                 self.open(H_ENT, Screen::Entropy(Entropy { total: 0, ones: 0, bins: [0; 16] }))
+            }
+            (MenuId::Utilities, 8) => {
+                let idx = rng::seed_words(&self.trng, 12).unwrap_or_default();
+                self.open(H_SEED, Screen::Seed { n: 12, idx, page: 0 })
             }
             (MenuId::Games, i) if i < GAMES.len() => self.open_game(i),
             (MenuId::Games, 8) => self.open(H_GAME + 8, Screen::Ball(None)),
@@ -1115,6 +1146,20 @@ impl App {
                 if lines.len() == 1 {
                     oled.text(4, 52, "OK new, hold OK type");
                 }
+            }
+            Screen::Seed { n, idx, page } => {
+                oled.card(0, 0, 128, 13);
+                oled.text(4, 0, &format!("Seed {} words", n));
+                let pg = format!("{}/{}", page + 1, (*n + 3) / 4);
+                oled.text(126 - 6 * pg.len(), 0, &pg);
+                oled.inset(0, 14, 128, 50);
+                for k in 0..4 {
+                    let i = page * 4 + k;
+                    if let Some(&w) = idx.get(i) {
+                        oled.text(4, 17 + 11 * k, &format!("{:>2} {}", i + 1, rng::bip39_word(w)));
+                    }
+                }
+                oled.text(4, 55, "OK=new  <>=count");
             }
             Screen::Dice { p, cur } => {
                 oled.text(0, 0, "Dice and coin");

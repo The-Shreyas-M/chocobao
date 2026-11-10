@@ -180,3 +180,20 @@ pub fn bits(p: &Profile, len: usize) -> u32 {
     let n = pools(p).iter().map(|c| c.len()).sum::<usize>().max(2);
     ((n as f32).log2() * len as f32) as u32
 }
+
+/// A valid BIP-39 recovery phrase of `n` words (12, 15, 18, 21 or 24) as word indexes, entropy from the TRNG.
+pub fn seed_words(trng: &Trng, n: usize) -> Option<Vec<u16>> {
+    let bytes = n * 11 * 32 / 33 / 8; // 12 words = 16 bytes ... 24 words = 32 bytes
+    let mut e = vec![0u8; bytes];
+    for chunk in e.chunks_mut(4) {
+        let x = trng.get_u32().ok()?.to_le_bytes();
+        chunk.copy_from_slice(&x[..chunk.len()]);
+    }
+    let idx = crate::seed::indexes(&e);
+    e.iter_mut().for_each(|b| *b = 0);
+    Some(idx)
+}
+
+pub fn bip39_word(i: u16) -> &'static str {
+    BIP39_TABLE[(i as usize) & 2047]
+}

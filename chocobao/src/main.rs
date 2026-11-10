@@ -9,6 +9,7 @@ mod logo;
 mod oled;
 mod pacman;
 mod rng;
+mod seed;
 mod sound;
 mod typing;
 mod cmds;

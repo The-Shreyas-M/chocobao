@@ -7,6 +7,7 @@ mod doom;
 mod games;
 mod logo;
 mod oled;
+mod pacman;
 mod rng;
 mod sound;
 mod typing;

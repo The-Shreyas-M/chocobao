@@ -60,6 +60,7 @@ const I_CROSS: [u8; 8] = [0x10, 0x10, 0x00, 0xE7, 0xE7, 0x00, 0x10, 0x10];
 const I_BALL: [u8; 8] = [0x3C, 0x7E, 0xE7, 0xDB, 0xE7, 0xDB, 0x66, 0x3C];
 const I_BUTTON: [u8; 8] = [0x3C, 0x42, 0x99, 0x99, 0x81, 0x42, 0x3C, 0x00];
 const I_BUN: [u8; 8] = [0x18, 0x3C, 0x7E, 0xFF, 0xFF, 0xFF, 0x7E, 0xFF];
+const I_PAC: [u8; 8] = [0x3C, 0x7E, 0xF8, 0xF0, 0xF8, 0x7E, 0x3C, 0x00];
 const I_SPEAKER: [u8; 8] = [0x08, 0x18, 0xF8, 0xF8, 0xF8, 0x18, 0x08, 0x00];
 
 #[derive(Clone, Copy, PartialEq)]
@@ -80,7 +81,7 @@ const fn it(label: &'static str, icon: &'static [u8; 8], desc: &'static str) -> 
 
 static MAIN_ITEMS: [Item; 4] = [
     it("Utilities", &I_TOOLBOX, "Passwords, dice, timers"),
-    it("Games", &I_GAMEPAD, "8 games incl. ChocoDoom"),
+    it("Games", &I_GAMEPAD, "9 games incl. Pac-Man"),
     it("Lab", &I_FLASK, "Tests and experiments"),
     it("About", &I_INFO, "Version and chip facts"),
 ];
@@ -94,7 +95,7 @@ static UTIL_ITEMS: [Item; 8] = [
     it("Timer", &I_HOURGLASS, "Countdown with alarm"),
     it("Entropy meter", &I_BARS, "Live check of the TRNG"),
 ];
-static GAME_ITEMS: [Item; 8] = [
+static GAME_ITEMS: [Item; 9] = [
     it("Mempool Dodger", &I_DODGER, "Dodge blocks, grab coins"),
     it("Snake", &I_SNAKE, "Eat, grow, don't crash"),
     it("Pong", &I_PONG, "You vs the computer"),
@@ -102,6 +103,7 @@ static GAME_ITEMS: [Item; 8] = [
     it("Simon", &I_SIMON, "Repeat the arrow pattern"),
     it("Reaction", &I_BOLT, "How fast are you?"),
     it("ChocoDoom", &I_CROSS, "3D shooter, 5 demons"),
+    it("Pac-Man", &I_PAC, "Eat the dots, dodge ghosts"),
     it("Magic 8-ball", &I_BALL, "Ask a yes/no question"),
 ];
 static LAB_ITEMS: [Item; 5] = [
@@ -139,8 +141,8 @@ const H_RAND: usize = 4;
 const H_STOP: usize = 5;
 const H_TIMER: usize = 6;
 const H_ENT: usize = 7;
-const H_GAME: usize = 8; // + game index (0..=7, 7 = Magic 8-ball)
-const HELP_COUNT: usize = 16;
+const H_GAME: usize = 8; // + game index (0..=7, 8 = Magic 8-ball)
+const HELP_COUNT: usize = 17;
 
 fn help_text(id: usize) -> (&'static str, [&'static str; 4]) {
     match id {
@@ -159,6 +161,7 @@ fn help_text(id: usize) -> (&'static str, [&'static str; 4]) {
         x if x == H_GAME + 4 => ("Simon", ["watch the arrows", "then repeat them with", "^ v < >", "it grows each round"]),
         x if x == H_GAME + 5 => ("Reaction", ["wait for GO!", "then press OK fast", "pressing early loses", ""]),
         x if x == H_GAME + 6 => ("ChocoDoom", ["^v  walk fwd / back", "<>  turn (hold)", "OK  shoot", "kill all 5 demons"]),
+        x if x == H_GAME + 7 => ("Pac-Man", ["^v<> steer (it remembers)", "eat every dot", "o = power: eat ghosts", "OK pauses"]),
         _ => ("Magic 8-ball", ["think of a question", "press OK", "", ""]),
     }
 }
@@ -265,7 +268,7 @@ fn parent(s: &Screen) -> Screen {
         Screen::Timer { .. } => Screen::Menu(MenuId::Utilities, 6),
         Screen::Entropy(_) => Screen::Menu(MenuId::Utilities, 7),
         Screen::Game { idx, .. } => Screen::Menu(MenuId::Games, *idx),
-        Screen::Ball(_) => Screen::Menu(MenuId::Games, 7),
+        Screen::Ball(_) => Screen::Menu(MenuId::Games, 8),
         Screen::ButtonTest => Screen::Menu(MenuId::Lab, 0),
         Screen::Diag => Screen::Menu(MenuId::Lab, 4),
         Screen::About => Screen::Menu(MenuId::Main, 3),
@@ -487,6 +490,7 @@ impl App {
             2 => Some(sound::TUNE_PONG),
             3 => Some(sound::TUNE_FLAPPY),
             6 => Some(sound::TUNE_DOOM),
+            7 => Some(sound::TUNE_PACMAN),
             _ => None,
         };
         self.snd.tune(tune);
@@ -818,7 +822,7 @@ impl App {
                 self.open(H_ENT, Screen::Entropy(Entropy { total: 0, ones: 0, bins: [0; 16] }))
             }
             (MenuId::Games, i) if i < GAMES.len() => self.open_game(i),
-            (MenuId::Games, 7) => self.open(H_GAME + 7, Screen::Ball(None)),
+            (MenuId::Games, 8) => self.open(H_GAME + 8, Screen::Ball(None)),
             (MenuId::Lab, 0) => self.goto(Screen::ButtonTest),
             (MenuId::Lab, 1) => {
                 self.snd.play(sound::SCALE);
@@ -1031,10 +1035,13 @@ impl App {
                     let idx = start + k;
                     if idx < list.len() {
                         let y = 13 + 13 * k;
-                        oled.icon(2, y + 2, list[idx].icon);
-                        oled.text(14, y, list[idx].label);
+                        if idx != *sel {
+                            oled.card(1, y, 124, 12); // raised soft button
+                        }
+                        oled.icon(4, y + 2, list[idx].icon);
+                        oled.text(16, y, list[idx].label);
                         if idx == *sel {
-                            oled.invert_rect(0, y - 1, 128, 13);
+                            oled.invert_rect(1, y, 124, 12); // the pressed one is lit
                         }
                     }
                 }
@@ -1061,29 +1068,52 @@ impl App {
             }
             Screen::PwGen { prof, len, pw, .. } => {
                 let p = &rng::PROFILES[*prof];
-                oled.text(0, 0, "Password maker");
+                // raised panel: type (UP/DOWN) with its position in the list
+                oled.card(0, 0, 128, 13);
+                oled.arrow(3, 2, 0);
+                oled.arrow(3, 7, 1);
+                oled.text(12, 0, cut(p.name, 17));
                 let c = format!("{}/{}", prof + 1, rng::PROFILES.len());
-                oled.text(128 - 6 * c.len(), 0, &c);
-                oled.arrow(1, 15, 0); // up
-                oled.arrow(1, 20, 1); // down
-                oled.text(10, 13, cut(p.name, 19));
-                oled.arrow(1, 28, 2); // left
-                oled.arrow(5, 28, 3); // right
+                oled.text(126 - 6 * c.len(), 0, &c);
+                // raised panel: length (LEFT/RIGHT) and strength
+                oled.card(0, 14, 128, 13);
+                oled.arrow(3, 18, 2);
+                oled.arrow(7, 18, 3);
                 let unit = if p.kind == rng::Kind::Words { "words" } else { "chars" };
-                oled.text(12, 26, &format!("{} {}  ~{} bits", len, unit, rng::bits(p, *len)));
-                let bytes = pw.as_bytes();
-                let l1 = String::from_utf8_lossy(&bytes[..bytes.len().min(21)]).to_string();
-                oled.text(0, 39, &l1);
-                if bytes.len() > 21 {
-                    let end = bytes.len().min(42);
-                    let mut l2 = String::from_utf8_lossy(&bytes[21..end]).to_string();
-                    if bytes.len() > 42 {
-                        l2.truncate(20);
-                        l2.push('~');
+                oled.text(14, 14, &format!("{} {} ~{} bits", len, unit, rng::bits(p, *len)));
+                // sunken panel: the secret, wrapped to fit (words are never cut in half)
+                oled.inset(0, 28, 128, 36);
+                let mut lines: Vec<String> = Vec::new();
+                if p.kind == rng::Kind::Words {
+                    let mut cur = String::new();
+                    for (i, w) in pw.split('-').enumerate() {
+                        let piece = if i == 0 { w.to_string() } else { format!("-{}", w) };
+                        if cur.len() + piece.len() > 20 && !cur.is_empty() {
+                            lines.push(std::mem::take(&mut cur));
+                            cur.push_str(piece.trim_start_matches('-'));
+                        } else {
+                            cur.push_str(&piece);
+                        }
                     }
-                    oled.text(0, 52, &l2);
+                    if !cur.is_empty() {
+                        lines.push(cur);
+                    }
                 } else {
-                    oled.text(0, 52, "OK new, hold OK type");
+                    for chunk in pw.as_bytes().chunks(20) {
+                        lines.push(String::from_utf8_lossy(chunk).to_string());
+                    }
+                }
+                let more = lines.len() > 3;
+                for (i, l) in lines.iter().take(3).enumerate() {
+                    let mut t = l.clone();
+                    if more && i == 2 {
+                        t.truncate(19);
+                        t.push('~');
+                    }
+                    oled.text(4, 30 + 11 * i, &t);
+                }
+                if lines.len() == 1 {
+                    oled.text(4, 52, "OK new, hold OK type");
                 }
             }
             Screen::Dice { p, cur } => {

@@ -222,6 +222,44 @@ impl Canvas {
         }
     }
 
+    /// Raised "soft button" panel: bright top/left edge, dithered shadow on the bottom/right, rounded corners.
+    pub fn card(&mut self, x: usize, y: usize, w: usize, h: usize) {
+        if w < 4 || h < 4 {
+            return;
+        }
+        self.fill_rect(x + 1, y, w - 2, 1, true);
+        self.fill_rect(x, y + 1, 1, h - 2, true);
+        for i in 1..w - 1 {
+            if (x + i) % 2 == 0 {
+                self.pixel(x + i, y + h - 1, true);
+            }
+        }
+        for j in 1..h - 1 {
+            if (y + j) % 2 == 0 {
+                self.pixel(x + w - 1, y + j, true);
+            }
+        }
+    }
+
+    /// Sunken panel: dithered shadow on the top/left, bright bottom/right edge.
+    pub fn inset(&mut self, x: usize, y: usize, w: usize, h: usize) {
+        if w < 4 || h < 4 {
+            return;
+        }
+        for i in 1..w - 1 {
+            if (x + i) % 2 == 0 {
+                self.pixel(x + i, y, true);
+            }
+        }
+        for j in 1..h - 1 {
+            if (y + j) % 2 == 0 {
+                self.pixel(x, y + j, true);
+            }
+        }
+        self.fill_rect(x + 1, y + h - 1, w - 2, 1, true);
+        self.fill_rect(x + w - 1, y + 1, 1, h - 2, true);
+    }
+
     /// Text scaled up by an integer factor (each font pixel becomes scale x scale pixels).
     pub fn text_big(&mut self, x: usize, y: usize, s: &str, scale: usize) {
         let mut cx = x;

@@ -46,7 +46,7 @@ enum MenuId {
 fn items(m: MenuId) -> &'static [&'static str] {
     match m {
         MenuId::Main => &["Passwords", "Dice", "Games", "Tools", "About"],
-        MenuId::Passwords => &["Type password", "Type 6 words", "Show password", "Show 6 words", "Show PIN (6)"],
+        MenuId::Passwords => &["Site-rules password", "Type 6 words", "Show 6 words", "Show PIN (6)"],
         MenuId::Games => &["Mempool Dodger", "Snake", "Pong", "Flappy Bao", "Simon", "Reaction"],
         MenuId::Tools => &[
             "Stopwatch",
@@ -103,6 +103,7 @@ enum Screen {
     Dice(usize, String),
     Show { title: String, lines: Vec<String>, back: MenuId },
     Countdown { words: bool, until: Instant },
+    PwGen { prof: usize, len: usize, pw: String },
     Game { idx: usize, g: Box<dyn Game> },
     Stopwatch { running: bool, started: Instant, acc: Duration },
     Ball(Option<usize>),
@@ -138,6 +139,7 @@ struct App {
     best: [u32; 6],
     sound_done: bool,
     anim_at: Instant,
+    rep_at: Instant,
     dirty: bool,
     last_secs: u64,
 }
@@ -171,6 +173,7 @@ fn run(rx: Receiver<Input>) {
         best: [0; 6],
         sound_done: false,
         anim_at: Instant::now(),
+        rep_at: Instant::now(),
         dirty: true,
         last_secs: 0,
     };
@@ -293,6 +296,7 @@ impl App {
         let mut redraw = false;
         let mut click = false;
         let mut restart = None;
+        let mut rep = false;
         match &mut self.screen {
             Screen::Menu(m, sel) => {
                 let n = items(*m).len();
@@ -323,6 +327,27 @@ impl App {
                 }
                 _ => {}
             },
+            Screen::PwGen { prof, len, pw } => {
+                let n = rng::PROFILES.len();
+                match b {
+                    Btn::Up => {
+                        *prof = (*prof + n - 1) % n;
+                        *len = rng::PROFILES[*prof].default_len;
+                    }
+                    Btn::Down => {
+                        *prof = (*prof + 1) % n;
+                        *len = rng::PROFILES[*prof].default_len;
+                    }
+                    Btn::Left => *len = (*len).saturating_sub(1).max(rng::LEN_MIN),
+                    Btn::Right => *len = (*len + 1).min(rng::LEN_MAX),
+                    _ => {}
+                }
+                if matches!(b, Btn::Up | Btn::Down | Btn::Left | Btn::Right) {
+                    *pw = rng::generate(&self.trng, &rng::PROFILES[*prof], *len).unwrap_or_default();
+                    redraw = true;
+                    rep = true;
+                }
+            }
             Screen::Game { idx, g } => {
                 if b == Btn::Ok && g.over() {
                     restart = Some(*idx); // OK after game over = play again
@@ -351,6 +376,9 @@ impl App {
             },
             _ => {}
         }
+        if rep {
+            self.rep_at = Instant::now() + Duration::from_millis(400);
+        }
         if click {
             self.snd.play(sound::CLICK);
         }
@@ -368,12 +396,14 @@ impl App {
             Select(MenuId, usize),
             Roll(usize),
             Shake,
+            PwOk(bool),
         }
         let act = match &self.screen {
             Screen::Home => Act::Quick(held_ms >= 1000),
             Screen::Menu(m, sel) => Act::Select(*m, *sel),
             Screen::Dice(p, _) => Act::Roll(*p),
             Screen::Ball(_) => Act::Shake,
+            Screen::PwGen { .. } => Act::PwOk(held_ms >= 800),
             _ => Act::None,
         };
         match act {
@@ -381,6 +411,24 @@ impl App {
             Act::Quick(words) => self.quick_type(words),
             Act::Select(m, sel) => self.select(m, sel),
             Act::Roll(p) => self.roll(p),
+            Act::PwOk(type_it) => {
+                let mut to_type: Option<String> = None;
+                if let Screen::PwGen { prof, len, pw } = &mut self.screen {
+                    if type_it {
+                        to_type = Some(pw.clone());
+                    } else {
+                        *pw = rng::generate(&self.trng, &rng::PROFILES[*prof], *len).unwrap_or_default();
+                    }
+                }
+                if let Some(text) = to_type {
+                    self.snd.play(sound::COIN);
+                    self.type_text(&text);
+                    self.status = "typed site pw".into();
+                } else {
+                    self.snd.play(sound::CLICK);
+                }
+                self.dirty = true;
+            }
             Act::Shake => {
                 let n = rng::below(&self.trng, BALL.len() as u32).unwrap_or(0) as usize;
                 self.snd.play(sound::COIN);
@@ -400,7 +448,7 @@ impl App {
             Screen::Menu(MenuId::Tools, _) => Screen::Menu(MenuId::Main, 3),
             Screen::Dice(..) => Screen::Menu(MenuId::Main, 1),
             Screen::Show { back, .. } => Screen::Menu(*back, 0),
-            Screen::Countdown { .. } => Screen::Menu(MenuId::Passwords, 0), // BACK cancels the countdown
+            Screen::Countdown { .. } | Screen::PwGen { .. } => Screen::Menu(MenuId::Passwords, 0),
             Screen::Game { idx, .. } => Screen::Menu(MenuId::Games, *idx),
             Screen::Stopwatch { .. } => Screen::Menu(MenuId::Tools, 0),
             Screen::Ball(_) => Screen::Menu(MenuId::Tools, 1),
@@ -437,20 +485,20 @@ impl App {
             (MenuId::Main, 2) => self.goto(Screen::Menu(MenuId::Games, 0)),
             (MenuId::Main, 3) => self.goto(Screen::Menu(MenuId::Tools, 0)),
             (MenuId::Main, 4) => self.goto(Screen::About),
-            (MenuId::Passwords, 0) => self.start_countdown(false),
+            (MenuId::Passwords, 0) => {
+                let (prof, len) = (0, rng::PROFILES[0].default_len);
+                let pw = rng::generate(&self.trng, &rng::PROFILES[prof], len).unwrap_or_default();
+                self.goto(Screen::PwGen { prof, len, pw });
+            }
             (MenuId::Passwords, 1) => self.start_countdown(true),
             (MenuId::Passwords, 2) => {
-                let lines = vec![rng::password(&self.trng).unwrap_or_default(), "".into(), "20 chars, 119 bits".into()];
-                self.goto(Screen::Show { title: "Password".into(), lines, back: MenuId::Passwords });
-            }
-            (MenuId::Passwords, 3) => {
                 let phrase = rng::passphrase(&self.trng).unwrap_or_default();
                 let parts: Vec<&str> = phrase.split('-').collect();
                 let mut lines: Vec<String> = parts.chunks(2).map(|c| c.join("-")).collect();
                 lines.push("6 words, 66 bits".into());
                 self.goto(Screen::Show { title: "6 words".into(), lines, back: MenuId::Passwords });
             }
-            (MenuId::Passwords, 4) => {
+            (MenuId::Passwords, 3) => {
                 let mut pin = String::new();
                 for _ in 0..6 {
                     pin.push((b'0' + rng::below(&self.trng, 10).unwrap_or(0) as u8) as char);
@@ -575,6 +623,16 @@ impl App {
                     *b = sc;
                 }
             }
+            Screen::PwGen { prof, len, pw } => {
+                // holding LEFT / RIGHT keeps changing the length
+                let (l, r) = (self.down[bidx(Btn::Left)], self.down[bidx(Btn::Right)]);
+                if l != r && now >= self.rep_at {
+                    *len = if l { (*len).saturating_sub(1).max(rng::LEN_MIN) } else { (*len + 1).min(rng::LEN_MAX) };
+                    *pw = rng::generate(&self.trng, &rng::PROFILES[*prof], *len).unwrap_or_default();
+                    self.rep_at = now + Duration::from_millis(90);
+                    self.dirty = true;
+                }
+            }
             Screen::Stopwatch { running, .. } => {
                 if *running {
                     self.dirty = true;
@@ -686,6 +744,14 @@ impl App {
                 oled.text(0, 0, if *words { "Typing 6 words in" } else { "Typing password in" });
                 oled.text_big(52, 16, &left.to_string(), 3);
                 oled.text(0, 52, "click target field");
+            }
+            Screen::PwGen { prof, len, pw } => {
+                let p = &rng::PROFILES[*prof];
+                oled.text(0, 0, p.name);
+                oled.text(0, 13, &format!("len {} ~{} bits", len, rng::bits(p, *len)));
+                for (i, chunk) in pw.as_bytes().chunks(21).enumerate().take(3) {
+                    oled.text(0, 26 + 13 * i, &String::from_utf8_lossy(chunk));
+                }
             }
             Screen::Game { idx, g } => g.draw(oled, self.best[*idx]),
             Screen::Stopwatch { running, started, acc } => {

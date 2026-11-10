@@ -157,6 +157,7 @@ fn run(rx: Receiver<Input>) {
     tt.sleep_ms(3500).ok(); // let USB, the console and the I2C service start
     let trng = Trng::new(&xns).unwrap();
     let usb = UsbHid::new();
+    crate::bootmode::usb_reconnect();
     // Safe-mode switches, read from buttons held while the device boots (see HANDOFF.md):
     //   hold BACK = no display and no sound (nothing touches I2C or the BIO), hold DOWN = no sound only.
     let mut held = [false; 6];

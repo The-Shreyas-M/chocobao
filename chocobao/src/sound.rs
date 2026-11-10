@@ -23,8 +23,10 @@ use bao1x_api::bio_resources::*;
 use bao1x_hal::bio::{Bio, CoreCsr};
 use utralib::utra::bio_bdma;
 
-/// BIO pin number of the buzzer (BIO3 = PB3 = header pin 32).
+/// BIO pin number of the buzzer (BIO3 = PB3 = header pin 32) and of its optional bridge partner
+/// (BIO1 = PB1 = header pin 29). Wire the buzzer between the two for a loud sound.
 const BIO_PIN: u8 = 3;
+const BIO_PIN_B: u8 = 1;
 /// Tick rate of the tone core (Hz).
 const TICK_HZ: u32 = 500_000;
 
@@ -143,25 +145,29 @@ impl Sound {
     pub fn status_text(&self) -> String { self.status.lock().map(|s| s.clone()).unwrap_or_default() }
 }
 
-// FIFO1 (x17) input: first word = pin mask, then pairs (half-period ticks, full periods) per note.
-// The pin idles low while the core waits on the FIFO.
+// FIFO1 (x17) input: first two words = pin masks A and B, then pairs (half-period ticks, full periods) per note.
+// The two pins are driven in opposite phase (bridge drive): a buzzer wired between them sees +-3.3 V instead of
+// 0..3.3 V, which is about 4x the power = clearly louder. With B unused (mask 0) it is a normal one-pin tone.
+// Both pins idle low while the core waits on the FIFO.
 #[rustfmt::skip]
 bio_code!(tone_kernel, TONE_START, TONE_END,
-    "mv x4, x17",   // pin mask
-    "mv x26, x4",   // apply the mask to all GPIO operations
-    "mv x24, x4",   // make the pin an output
-    "mv x23, x0",   // drive it low
+    "mv x4, x17",   // pin mask A
+    "mv x5, x17",   // pin mask B (0 = not used)
+    "or x6, x4, x5",
+    "mv x26, x6",   // apply the combined mask to all GPIO operations
+    "mv x24, x6",   // make both pins outputs
+    "mv x21, x0",   // both low
 "10:",
     "mv x8, x17",   // half period in ticks (blocks until the host sends it)
     "mv x9, x17",   // number of full periods
 "20:",
-    "mv x22, x4",   // pin high
+    "mv x21, x4",   // A high, B low
     "mv x10, x8",
 "21:",
     "mv x20, x0",   // wait one tick
     "addi x10, x10, -1",
     "bne x10, x0, 21b",
-    "mv x23, x0",   // pin low
+    "mv x21, x5",   // A low, B high
     "mv x10, x8",
 "22:",
     "mv x20, x0",
@@ -169,6 +175,7 @@ bio_code!(tone_kernel, TONE_START, TONE_END,
     "bne x10, x0, 22b",
     "addi x9, x9, -1",
     "bne x9, x0, 20b",
+    "mv x21, x0",   // both low (silence)
     "j 10b"
 );
 
@@ -176,6 +183,7 @@ struct Tone {
     _bio: Bio,
     _handle: CoreHandle,
     tx: CoreCsr,
+    bridge: bool,
 }
 
 fn init_tone() -> Result<Tone, String> {
@@ -185,15 +193,22 @@ fn init_tone() -> Result<Tone, String> {
         cores: vec![CoreRequirement::Any],
         fifos: vec![Fifo::Fifo1],
         static_pins: vec![],
-        dynamic_pin_count: 1,
+        dynamic_pin_count: 2,
     };
     let grant = bio.claim_resources(&spec).map_err(|e| format!("claim {:?}", e))?;
     let config = CoreConfig { clock_mode: ClockMode::TargetFreqInt(TICK_HZ) };
     bio.init_core(grant.cores[0], tone_kernel(), config).map_err(|e| format!("init {:?}", e))?;
     bio.set_core_run_state(&grant, true);
     bio.claim_dynamic_pin(BIO_PIN, &spec.claimer).map_err(|e| format!("pin {:?}", e))?;
+    let mut mask_b = 0u32;
+    let mut bridge = false;
+    if bio.claim_dynamic_pin(BIO_PIN_B, &spec.claimer).is_ok() {
+        mask_b = 1 << u5::new(BIO_PIN_B).as_u32();
+        bridge = true;
+    }
+    let mask_a = 1u32 << u5::new(BIO_PIN).as_u32();
     let mut io = IoConfig::default();
-    io.mapped = 1 << u5::new(BIO_PIN).as_u32();
+    io.mapped = mask_a | mask_b;
     io.mode = IoConfigMode::Overwrite;
     bio.setup_io_config(io).map_err(|e| format!("io {:?}", e))?;
     // safety: the handle is stored in the Tone object so it outlives the CSR view
@@ -201,8 +216,9 @@ fn init_tone() -> Result<Tone, String> {
         .map_err(|e| format!("fifo {:?}", e))?
         .ok_or_else(|| "no FIFO1 handle".to_string())?;
     let mut tx = CoreCsr::from_handle(&handle);
-    tx.csr.wo(bio_bdma::SFR_TXF1, io.mapped);
-    Ok(Tone { _bio: bio, _handle: handle, tx })
+    tx.csr.wo(bio_bdma::SFR_TXF1, mask_a);
+    tx.csr.wo(bio_bdma::SFR_TXF1, mask_b);
+    Ok(Tone { _bio: bio, _handle: handle, tx, bridge })
 }
 
 impl Tone {
@@ -221,7 +237,7 @@ fn run(rx: Receiver<Msg>, enabled: Arc<AtomicBool>, status: Arc<Mutex<String>>) 
     let mut tone = match init_tone() {
         Ok(t) => {
             if let Ok(mut s) = status.lock() {
-                *s = "BIO tone ok".into();
+                *s = if t.bridge { "BIO tone ok (bridge)".into() } else { "BIO tone ok".into() };
             }
             Some(t)
         }

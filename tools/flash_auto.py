@@ -1,10 +1,13 @@
-"""flash_auto: flash the ChocoBao images over the bootloader's serial console (about 3 s for the app).
+"""flash_auto: flash the ChocoBao images with NO button presses (needs `bootwait` ENABLED, see below).
 
-  1. Hold PROG, tap RESET, release PROG  (the board enters the bootloader, USB id 1d50:6196).
-  2. python tools/flash_auto.py                       -> app only (apps.uf2)
-     python tools/flash_auto.py loader.uf2 xous.uf2 apps.uf2   -> everything (after a kernel/HAL change)
-The script waits up to 3 minutes for the bootloader, flashes, then types `reset` so the chip restarts into the
-app (bootwait is disabled). The serial error printed at the very end is harmless: the board resets mid-write.
+  python tools/flash_auto.py                                 -> app only (apps.uf2)
+  python tools/flash_auto.py loader.uf2 xous.uf2 apps.uf2    -> everything (after a kernel/HAL change)
+
+Flow: if the app is running, the script types `reboot` into its console (whole-chip reset). With bootwait enabled
+the bootloader then stays up and waits; the script flashes over its serial console (3-10 s) and types `boot`.
+The app re-announces itself on USB so Windows lists it again. If the board is already in the bootloader it just
+flashes. Stuck? Hold PROG, tap RESET, release PROG, then run the script again.
+The serial error printed at the very end is harmless.
 """
 import argparse
 import pathlib
@@ -59,10 +62,21 @@ def main():
 
     boot = port_for(BOOT_PID)
     if not boot:
-        print("waiting for the bootloader: hold PROG, tap RESET, release PROG")
-        boot = wait_for(BOOT_PID, 180)
+        app = port_for(APP_PID)
+        if app:
+            print(f"app on {app}: asking it to reboot into the bootloader...")
+            try:
+                s = serial.Serial(app, 1_000_000, timeout=0.2)
+                time.sleep(0.3)
+                s.reset_input_buffer()
+                type_slow(s, "reboot")
+                time.sleep(0.5)
+                s.close()
+            except serial.SerialException as e:
+                print(f"could not talk to {app}: {e}")
+        boot = wait_for(BOOT_PID, 40 if app else 5)
         if not boot:
-            sys.exit("no bootloader appeared within 3 minutes")
+            sys.exit("the bootloader did not appear. Hold PROG, tap RESET, release PROG, then run this again.")
     print(f"bootloader on {boot}")
     time.sleep(2.0)
 
@@ -76,8 +90,8 @@ def main():
     kb = sum(sz for _, sz, _ in blocks) / 1024
     print(f"flashed {len(blocks)} blocks ({kb:.0f} KiB) in {time.time() - t0:.1f}s")
 
-    print("resetting into the app...")
-    type_slow(s, "reset")
+    print("starting the app (boot)...")
+    type_slow(s, "boot")
     time.sleep(0.5)
     try:
         s.close()

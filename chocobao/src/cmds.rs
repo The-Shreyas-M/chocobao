@@ -105,6 +105,8 @@ pub mod bip39_en;
 mod dice;
 mod diag_cmd;
 use diag_cmd::*;
+mod reboot_cmd;
+use reboot_cmd::*;
 use dice::*;
 use bio::*;
 
@@ -169,6 +171,7 @@ impl CmdEnv {
         let mut console_cmd = Test {};
         let mut i2cdetect_cmd = I2cDetect {};
         let mut diag_cmd = DiagCmd {};
+        let mut reboot_cmd = RebootCmd {};
 
         let commands: &mut [&mut dyn ShellCmdApi] = &mut [
             ///// 4. add your command to this array, so that it can be looked up and dispatched
@@ -187,6 +190,7 @@ impl CmdEnv {
             &mut self.bio,
             &mut self.dice_cmd,
             &mut diag_cmd,
+            &mut reboot_cmd,
         ];
 
         if let Some(cmdline) = maybe_cmdline {

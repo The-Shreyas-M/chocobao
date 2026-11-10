@@ -1,8 +1,9 @@
-// logo.rs - the ChocoBao start-up animation (a chocolate bao bun with steam) and a small idle bun for HOME.
-// Pure drawing code: no hardware, no allocation, integer maths only.
+// logo.rs - the ChocoBao start-up animation and the HOME logo: a white steamed bao bun with pleats, chocolate
+// poured over it from a little jug (the chocolate is the dark part with a glossy shine, and it drips over the
+// edge), steam curling above. Pure drawing code: no hardware, no allocation, integer maths only.
 use crate::oled::Canvas;
 
-pub const BOOT_MS: u32 = 3600;
+pub const BOOT_MS: u32 = 3800;
 
 /// Triangle wave -2..2 used for the steam wiggle.
 fn wig(phase: u32) -> i32 {
@@ -16,7 +17,6 @@ fn steam(c: &mut Canvas, cx: i32, top: i32, t: u32, height: i32) {
         for k in 0..height {
             let y = top - 2 - k * 2;
             let off = wig(t / 90 + (k as u32) * 2 + (i as u32) * 3);
-            // fade out towards the top by skipping dots
             if k < height - 2 || (t / 120 + k as u32) % 2 == 0 {
                 c.dot(x0 + off, y, true);
                 c.dot(x0 + off, y - 1, true);
@@ -25,53 +25,99 @@ fn steam(c: &mut Canvas, cx: i32, top: i32, t: u32, height: i32) {
     }
 }
 
-/// The bun: a dome with pleats, chocolate dither filling from the top down to `choc` (0..=100 percent).
+/// How far the chocolate hangs down at horizontal offset `dx`: an uneven lower edge with a few long drips.
+fn drip(dx: i32) -> i32 {
+    let d = (dx * 7 + 31).rem_euclid(11);
+    match d {
+        0 | 1 => 6,
+        2 => 2,
+        3 | 4 => 4,
+        5 => 1,
+        6 | 7 => 3,
+        8 => 7,
+        _ => 2,
+    }
+}
+
+/// The bun. `choc` = how much of the dome is covered by chocolate, 0..=100 percent.
+/// Lit pixels = white bun. Pleats are dark lines. The chocolate is dark with a few lit shine dots.
 fn bun(c: &mut Canvas, cx: i32, base: i32, rx: i32, ry: i32, choc: i32) {
     let top = base - ry;
-    // chocolate (checkerboard dither) inside the dome
-    let level = top + (ry * choc / 100);
+    // 1. white body
     for dx in -rx..=rx {
         let h = Canvas::dome_h(rx, ry, dx);
-        for y in (base - h)..=level.min(base - 1) {
-            if (dx + y) & 1 == 0 {
-                c.dot(cx + dx, y, true);
+        for y in (base - h)..base {
+            c.dot(cx + dx, y, true);
+        }
+    }
+    // 2. pleats radiate from the knot at the top (dark lines on the white bun)
+    for k in [-2i32, -1, 0, 1, 2] {
+        c.line_set(cx, top + 3, cx + k * rx * 2 / 5, base - 1, false);
+    }
+    // 3. chocolate poured over the top: dark, with an uneven edge and drips
+    if choc > 0 {
+        for dx in -rx..=rx {
+            let h = Canvas::dome_h(rx, ry, dx);
+            let surface = base - h;
+            let reach = ry * choc / 100 / 2 + (drip(dx) * choc / 100);
+            for y in (surface + 1)..(surface + 1 + reach).min(base) {
+                c.dot(cx + dx, y, false);
             }
         }
-    }
-    // outline, 2 px thick
-    for dx in -rx..=rx {
-        let h = Canvas::dome_h(rx, ry, dx);
-        let hn = Canvas::dome_h(rx, ry, dx + 1).max(Canvas::dome_h(rx, ry, dx - 1));
-        for y in (base - h.max(hn))..=(base - h) {
-            c.dot(cx + dx, y, true);
-            c.dot(cx + dx, y + 1, true);
+        // glossy shine
+        if choc > 40 {
+            c.dot(cx - rx / 2, top + 3, true);
+            c.dot(cx - rx / 2 + 1, top + 4, true);
+            c.dot(cx - rx / 2 - 1, top + 5, true);
+            c.dot(cx + rx / 3, top + 4, true);
         }
     }
-    // pleats from the knot at the top
-    c.fill_rect((cx - 2) as usize, (top - 1).max(0) as usize, 5, 3, true);
-    for k in [-2i32, -1, 1, 2] {
-        c.line(cx, top + 2, cx + k * rx / 3, base - 2);
+    // 4. a bamboo steamer tray under the bun
+    c.fill_rect((cx - rx - 3).max(0) as usize, base as usize, (2 * rx + 7) as usize, 2, true);
+}
+
+/// The chocolate jug tilted over the bun, with the stream running down to the chocolate surface.
+fn jug(c: &mut Canvas, x: i32, y: i32, stream_to: i32, pouring: bool) {
+    // body
+    c.fill_rect(x as usize, y as usize, 9, 7, true);
+    c.fill_rect((x + 2) as usize, (y + 2) as usize, 5, 3, false);
+    // handle
+    c.line(x + 9, y + 1, x + 11, y + 3);
+    c.line(x + 11, y + 3, x + 9, y + 6);
+    // spout
+    c.line(x, y, x - 2, y + 2);
+    if pouring {
+        let sx = x - 2;
+        for yy in (y + 3)..stream_to {
+            c.dot(sx, yy, (yy / 2) % 2 == 0 || yy < stream_to - 3);
+        }
     }
-    // base
-    c.fill_rect((cx - rx - 2).max(0) as usize, base as usize, (2 * rx + 5) as usize, 2, true);
 }
 
 /// Full start-up animation, `t` = milliseconds since start.
 pub fn boot_frame(c: &mut Canvas, t: u32) {
     let (cx, rx, ry) = (33, 24, 20);
-    // 0-900 ms: the bun rises from below the screen (ease-out)
-    let p = (t.min(900) * 100 / 900) as i32; // 0..100
-    let eased = p * (200 - p) / 100; // 0..100
-    let base = 54 + (100 - eased) * 44 / 100;
-    // 700-1800 ms: chocolate pours over it
-    let choc = ((t.saturating_sub(700)).min(1100) * 100 / 1100) as i32;
+    // 0-800 ms: the bun rises from below the screen (ease-out)
+    let p = (t.min(800) * 100 / 800) as i32;
+    let eased = p * (200 - p) / 100;
+    let base = 56 + (100 - eased) * 44 / 100;
+    // 900-2300 ms: chocolate is poured
+    let choc = ((t.saturating_sub(900)).min(1400) * 100 / 1400) as i32;
     bun(c, cx, base, rx, ry, choc);
-    if t > 1500 {
+    // the jug swings in from the right, pours, then leaves
+    if (700..2600).contains(&t) {
+        let jx = if t < 900 { 80 - ((t - 700) as i32 / 8) } else if t < 2300 { 55 } else { 55 + ((t - 2300) as i32 / 6) };
+        let jy = 4;
+        let pouring = (900..2300).contains(&t);
+        let surface = base - ry + 2 + (ry * choc / 100 / 2);
+        jug(c, jx, jy, surface.max(jy + 6), pouring);
+    }
+    if t > 2000 {
         steam(c, cx, base - ry - 2, t, 5);
     }
-    // 1700+ ms: the name, typed out one letter per 110 ms
-    if t > 1700 {
-        let n = ((t - 1700) / 110) as usize;
+    // 2200+ ms: the name, typed out one letter per 110 ms
+    if t > 2200 {
+        let n = ((t - 2200) / 110) as usize;
         let choco = "Choco";
         let bao = "Bao";
         let a = n.min(choco.len());
@@ -81,39 +127,17 @@ pub fn boot_frame(c: &mut Canvas, t: u32) {
             c.text_big(63, 30, &bao[..b], 3);
         }
     }
-    if t > 2900 {
+    if t > 3200 {
         c.text(63, 54, "multitool");
     }
-    // a short flash when the logo is complete
-    if (3000..3080).contains(&t) {
-        c.invert_rect(0, 0, 128, 64);
-    }
 }
 
-/// Small bun with steam for the HOME screen (about 26 px wide), `t` in ms.
-pub fn mini(c: &mut Canvas, x: i32, y: i32, t: u32) {
-    // dome 12 wide, 8 high, with a dither "chocolate" top and steam
-    let (rx, ry) = (12, 9);
-    let base = y + ry;
-    for dx in -rx..=rx {
-        let h = Canvas::dome_h(rx, ry, dx);
-        for yy in (base - h)..base {
-            if yy == base - h || (dx + yy) & 1 == 0 {
-                c.dot(x + dx, yy, true);
-            }
-        }
-    }
-    c.fill_rect((x - rx - 1).max(0) as usize, base as usize, (2 * rx + 3) as usize, 2, true);
-    steam(c, x, y - 1, t, 2);
-}
-
-/// The HOME screen: the finished logo, steaming, plus the hint to open the menu.
+/// The HOME screen: the finished bun, steaming, plus the hint to open the menu.
 pub fn home_frame(c: &mut Canvas, t: u32) {
     bun(c, 28, 50, 22, 17, 100);
     steam(c, 28, 31, t, 5);
     c.text_big(58, 6, "Choco", 2);
     c.text_big(58, 26, "Bao", 2);
-    // slow blink on the hint so the screen feels alive
     if (t / 700) % 4 != 3 {
         c.text(58, 52, "BACK = menu");
     }

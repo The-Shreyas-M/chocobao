@@ -128,14 +128,17 @@ impl Canvas {
 
 
     /// Straight line (Bresenham).
-    pub fn line(&mut self, x0: i32, y0: i32, x1: i32, y1: i32) {
+    pub fn line(&mut self, x0: i32, y0: i32, x1: i32, y1: i32) { self.line_set(x0, y0, x1, y1, true); }
+
+    /// Straight line that sets (`on`) or clears pixels.
+    pub fn line_set(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, on: bool) {
         let (mut x, mut y) = (x0, y0);
         let (dx, dy) = ((x1 - x0).abs(), -(y1 - y0).abs());
         let (sx, sy) = (if x0 < x1 { 1 } else { -1 }, if y0 < y1 { 1 } else { -1 });
         let mut err = dx + dy;
         for _ in 0..512 {
             if x >= 0 && y >= 0 {
-                self.pixel(x as usize, y as usize, true);
+                self.pixel(x as usize, y as usize, on);
             }
             if x == x1 && y == y1 {
                 break;

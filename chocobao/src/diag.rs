@@ -16,6 +16,44 @@ pub static SCREEN: AtomicU32 = AtomicU32::new(0); // which screen is showing (se
 pub static MODE: AtomicU32 = AtomicU32::new(0); // bit0 = display off, bit1 = sound off (safe-mode switches)
 pub static BTN_EVENTS: AtomicU32 = AtomicU32::new(0); // button events received
 
+pub static APP_BUSY_US: AtomicU32 = AtomicU32::new(0); // microseconds the app loop spent working (not sleeping), wraps
+pub static DISP_BUSY_MS: AtomicU32 = AtomicU32::new(0); // milliseconds the display thread spent in I2C transfers
+pub static SND_BUSY_MS: AtomicU32 = AtomicU32::new(0); // milliseconds the BIO core spent making tones
+pub static TRNG_WORDS: AtomicU32 = AtomicU32::new(0); // 32-bit words read from the hardware random number generator
+pub static TYPED_CHARS: AtomicU32 = AtomicU32::new(0); // characters typed into the PC over USB
+pub static HEAP_USED: AtomicU32 = AtomicU32::new(0); // bytes of heap in use right now
+pub static HEAP_PEAK: AtomicU32 = AtomicU32::new(0); // highest heap use so far
+
+/// Wraps the normal allocator and keeps count, so the CPU stats screen can show how much memory the app uses.
+pub struct CountingAlloc;
+
+unsafe impl std::alloc::GlobalAlloc for CountingAlloc {
+    unsafe fn alloc(&self, l: std::alloc::Layout) -> *mut u8 {
+        let p = std::alloc::System.alloc(l);
+        if !p.is_null() {
+            let u = HEAP_USED.fetch_add(l.size() as u32, Relaxed) + l.size() as u32;
+            max(&HEAP_PEAK, u);
+        }
+        p
+    }
+    unsafe fn dealloc(&self, p: *mut u8, l: std::alloc::Layout) {
+        HEAP_USED.fetch_sub(l.size() as u32, Relaxed);
+        std::alloc::System.dealloc(p, l)
+    }
+    unsafe fn realloc(&self, p: *mut u8, l: std::alloc::Layout, new_size: usize) -> *mut u8 {
+        let q = std::alloc::System.realloc(p, l, new_size);
+        if !q.is_null() {
+            if new_size >= l.size() {
+                let u = HEAP_USED.fetch_add((new_size - l.size()) as u32, Relaxed) + (new_size - l.size()) as u32;
+                max(&HEAP_PEAK, u);
+            } else {
+                HEAP_USED.fetch_sub((l.size() - new_size) as u32, Relaxed);
+            }
+        }
+        q
+    }
+}
+
 static START: OnceLock<Instant> = OnceLock::new();
 
 pub fn init() { START.get_or_init(Instant::now); }

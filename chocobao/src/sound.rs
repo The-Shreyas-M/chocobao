@@ -12,7 +12,7 @@
 // `Sound::play` never blocks. A background thread plays queued effects first, then the looping background tune
 // (if any), one short note at a time so an effect never waits long.
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
 
@@ -99,6 +99,13 @@ enum Msg {
 }
 
 static FAT: AtomicBool = AtomicBool::new(false);
+static CUR_HZ: AtomicU32 = AtomicU32::new(0); // frequency of the tune note playing now (0 = rest / none)
+static POS: AtomicUsize = AtomicUsize::new(0); // index of the tune note playing now
+
+/// Frequency of the song note playing right now (0 = silence); used by the music visualiser.
+pub fn cur_hz() -> u32 { CUR_HZ.load(Ordering::Relaxed) }
+/// Index of the song note playing right now.
+pub fn song_pos() -> usize { POS.load(Ordering::Relaxed) }
 static ACTIVE: AtomicBool = AtomicBool::new(false); // a background tune / song is playing
 static ONCE: AtomicBool = AtomicBool::new(false); // the current tune plays once (songs) instead of looping
 
@@ -279,6 +286,7 @@ fn run(rx: Receiver<Msg>, enabled: Arc<AtomicBool>, status: Arc<Mutex<String>>) 
     let mut effects: VecDeque<Note> = VecDeque::new();
     let mut tune: Option<&'static [Note]> = None;
     let mut idx = 0usize;
+    let mut pending: Option<Note> = None;
     loop {
         // collect messages without blocking; block only when there is nothing to play
         loop {
@@ -299,53 +307,59 @@ fn run(rx: Receiver<Msg>, enabled: Arc<AtomicBool>, status: Arc<Mutex<String>>) 
                 Msg::Tune(t) => {
                     tune = t;
                     idx = 0;
+                    pending = None;
+                    CUR_HZ.store(0, Ordering::Relaxed);
                 }
             }
         }
         let on = enabled.load(Ordering::Relaxed);
         let mut from_tune = false;
-        let mut same_next = false;
-        let note = if let Some(n) = effects.pop_front() {
-            Some(n)
-        } else if let (Some(t), true) = (tune, on) {
-            if ONCE.load(Ordering::Relaxed) && idx >= t.len() {
-                tune = None; // the song is over
-                ACTIVE.store(false, Ordering::Relaxed);
-                continue;
+        let mut note: Option<Note> = None;
+        if let Some(n) = effects.pop_front() {
+            note = Some(n);
+        } else if on {
+            if let Some(p) = pending.take() {
+                // the rest of a long song note (effects that arrived meanwhile were played first)
+                if tune.is_some() {
+                    note = Some(p);
+                    from_tune = true;
+                }
+            } else if let Some(t) = tune {
+                if ONCE.load(Ordering::Relaxed) && idx >= t.len() {
+                    tune = None; // the song is over
+                    ACTIVE.store(false, Ordering::Relaxed);
+                    CUR_HZ.store(0, Ordering::Relaxed);
+                    continue;
+                }
+                let n = t[idx % t.len()];
+                POS.store(idx % t.len(), Ordering::Relaxed);
+                CUR_HZ.store(n.0 & !TIE, Ordering::Relaxed);
+                idx += 1;
+                note = Some(n);
+                from_tune = true;
             }
-            let n = t[idx % t.len()];
-            idx += 1;
-            from_tune = true;
-            same_next = n.0 & TIE != 0; // a piece of a long note tied to the next: no gap
-            Some(n)
-        } else {
-            None
-        };
-        if let Some((hz, ms)) = note {
-            let hz = hz & !TIE;
-            if hz != REST && on && from_tune && ms >= 60 && FAT.load(Ordering::Relaxed) {
-                // fuller sound: the note and its octave alternate every 12 ms (two voices sharing the pin)
+        }
+        if let Some((raw, ms)) = note {
+            let hz = raw & !TIE;
+            let mut ms = ms;
+            let mut tied = raw & TIE != 0; // a piece of a long note tied to the next: no gap
+            // song notes are played in short slices, so a click or effect never waits more than ~40 ms
+            if from_tune && ms > SLICE_MS + 15 {
+                pending = Some((raw, ms - SLICE_MS));
+                ms = SLICE_MS;
+                tied = true;
+            }
+            if hz != REST && on {
                 if let Some(t) = tone.as_mut() {
-                    let (mut left, mut k) = (ms, 0u32);
-                    while left > 0 {
-                        let sl = left.min(12);
-                        t.start(if k % 2 == 0 { hz } else { (hz * 2).min(2500) }, sl);
-                        tt.sleep_ms(sl as usize).ok();
-                        left -= sl;
-                        k += 1;
-                    }
+                    t.start(hz, ms);
+                    crate::diag::SND_BUSY_MS.fetch_add(ms, Ordering::Relaxed);
                 }
-                tt.sleep_ms(if same_next { 0 } else { 10 }).ok();
-            } else {
-                if hz != REST && on {
-                    if let Some(t) = tone.as_mut() {
-                        t.start(hz, ms);
-                    }
-                }
-                tt.sleep_ms(ms as usize + if same_next { 0 } else { 10 }).ok(); // 10 ms gap so repeated notes are distinct
             }
+            tt.sleep_ms(ms as usize + if tied { 0 } else { 10 }).ok(); // 10 ms gap so repeated notes are distinct
         } else if tune.is_some() && !on {
             tt.sleep_ms(100).ok();
         }
     }
 }
+
+const SLICE_MS: u32 = 40;

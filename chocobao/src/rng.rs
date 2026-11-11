@@ -13,7 +13,7 @@ pub fn below(trng: &Trng, n: u32) -> Option<u32> {
     }
     let zone = u32::MAX - (u32::MAX % n);
     loop {
-        let x = trng.get_u32().ok()?;
+        let x = { crate::diag::bump(&crate::diag::TRNG_WORDS); trng.get_u32().ok()? };
         if x < zone {
             return Some(x % n);
         }
@@ -186,7 +186,7 @@ pub fn seed_words(trng: &Trng, n: usize) -> Option<Vec<u16>> {
     let bytes = n * 11 * 32 / 33 / 8; // 12 words = 16 bytes ... 24 words = 32 bytes
     let mut e = vec![0u8; bytes];
     for chunk in e.chunks_mut(4) {
-        let x = trng.get_u32().ok()?.to_le_bytes();
+        let x = { crate::diag::bump(&crate::diag::TRNG_WORDS); trng.get_u32().ok()? }.to_le_bytes();
         chunk.copy_from_slice(&x[..chunk.len()]);
     }
     let idx = crate::seed::indexes(&e);

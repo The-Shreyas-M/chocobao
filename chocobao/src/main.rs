@@ -11,6 +11,7 @@ mod mandel;
 mod oled;
 mod pacman;
 mod music;
+mod player;
 mod rng;
 mod saver;
 mod seed;
@@ -24,6 +25,9 @@ mod repl;
 mod shell;
 use cmds::*;
 use usb_bao1x::UsbHid;
+
+#[global_allocator]
+static ALLOC: diag::CountingAlloc = diag::CountingAlloc;
 
 fn main() {
     log_server::init_wait().unwrap();

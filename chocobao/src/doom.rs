@@ -14,23 +14,31 @@ use crate::controls::Btn;
 use crate::games::{Game, Snd};
 use crate::oled::Canvas;
 
-const MAP: [&str; 16] = [
-    "################",
-    "#.......#......#",
-    "#.......#..##..#",
-    "#.......#..##..#",
-    "#...##.........#",
-    "#...##..#......#",
-    "#.......#####.##",
-    "#.......#......#",
-    "###.#####......#",
-    "#..............#",
-    "#.####..####...#",
-    "#.#..#..#..#...#",
-    "#.#..#..#..#...#",
-    "#.#..#..#..#...#",
-    "#..............#",
-    "################",
+const MAP: [&str; 24] = [
+    "########################",
+    "#......#..........#....#",
+    "#......#..........#....#",
+    "#......#..........#....#",
+    "#......................#",
+    "#......#..........#....#",
+    "###.########.#######.###",
+    "#......................#",
+    "#......................#",
+    "#..%%%%%%%%%%%%%%%%%%..#",
+    "#..%................%..#",
+    "#..%................%..#",
+    "#..%................%..#",
+    "#..%%%%%%%%.%%%%%%%%%..#",
+    "#......................#",
+    "#......................#",
+    "#.....###......###.....#",
+    "#.....###......###.....#",
+    "#.....###......###.....#",
+    "#......................#",
+    "#......................#",
+    "#......................#",
+    "#......................#",
+    "########################",
 ];
 
 // level 2 and 3: tighter corridors and more demons (OK after a win starts the next level)
@@ -72,17 +80,19 @@ const MAP3: [&str; 16] = [
 ];
 static LEVEL: AtomicUsize = AtomicUsize::new(0);
 
-fn map() -> &'static [&'static str; 16] {
+fn map() -> &'static [&'static str] {
     match LEVEL.load(Ordering::Relaxed) {
-        1 => &MAP2,
-        2 => &MAP3,
-        _ => &MAP,
+        1 => &MAP2[..],
+        2 => &MAP3[..],
+        _ => &MAP[..],
     }
 }
 
 const NCOL: usize = 64; // rays per frame, each drawn 2 pixels wide
-const VIEW_TOP: i32 = 12;
-const VIEW_H: i32 = 52;
+const VIEW_TOP: i32 = 0;
+const VIEW_H: i32 = 54;
+const VIEW_BOT: i32 = 53; // the status bar owns the last 10 rows
+const MAX_HP: i32 = 8;
 const TURN_MIN: f32 = 0.8; // rad/s the moment LEFT/RIGHT goes down (fine aiming)
 const TURN_MAX: f32 = 2.0; // rad/s after the key was held for TURN_RAMP seconds
 const TURN_RAMP: f32 = 0.5;
@@ -95,6 +105,8 @@ struct Enemy {
     x: f32,
     y: f32,
     hp: i32,
+    cd: f32,    // seconds until it may shoot again
+    kind: u8, // 0 = zombieman (shoots from a distance), 1 = imp (comes close)
 }
 
 pub struct Doom {
@@ -122,6 +134,19 @@ pub struct Doom {
     snd: Option<Snd>,
 }
 
+/// True when nothing solid is between the two points.
+fn line_clear(ax: f32, ay: f32, bx: f32, by: f32) -> bool {
+    let (dx, dy) = (bx - ax, by - ay);
+    let n = ((dx * dx + dy * dy).sqrt() / 0.25) as i32;
+    for i in 1..n {
+        let f = i as f32 / n as f32;
+        if is_wall(ax + dx * f, ay + dy * f) {
+            return false;
+        }
+    }
+    true
+}
+
 fn is_wall(x: f32, y: f32) -> bool {
     if x < 0.0 || y < 0.0 {
         return true;
@@ -131,14 +156,14 @@ fn is_wall(x: f32, y: f32) -> bool {
     if iy >= m.len() || ix >= m[0].len() {
         return true;
     }
-    m[iy].as_bytes()[ix] == b'#'
+    m[iy].as_bytes()[ix] != b'.'
 }
 
 impl Doom {
     pub fn new(_trng: &Trng) -> Self {
         let level = LEVEL.load(Ordering::Relaxed) % 3;
         let (spots, start): (Vec<(f32, f32)>, (f32, f32)) = match level {
-            0 => (vec![(13.5, 2.5), (4.5, 2.5), (13.5, 9.5), (7.5, 5.5), (10.5, 13.5), (13.5, 7.5)], (1.5, 14.5)),
+            0 => (vec![(3.5, 3.5), (13.5, 2.5), (21.5, 3.5), (11.5, 11.5), (5.5, 15.5), (18.5, 15.5), (12.5, 18.5)], (12.5, 21.5)),
             1 => (vec![(13.5, 1.5), (13.5, 13.5), (8.5, 5.5), (5.5, 11.5), (9.5, 9.5), (4.5, 5.5), (13.5, 7.5)], (1.5, 1.5)),
             _ => (vec![(13.5, 1.5), (9.5, 1.5), (13.5, 7.5), (4.5, 8.5), (1.5, 13.5), (9.5, 13.5), (13.5, 13.5), (5.5, 5.5)], (1.5, 1.5)),
         };
@@ -146,10 +171,10 @@ impl Doom {
             born: Instant::now(),
             px: start.0,
             py: start.1,
-            a: if level == 0 { -0.5 } else { 0.6 },
-            hp: 5,
+            a: if level == 0 { -1.57 } else { 0.6 },
+            hp: MAX_HP,
             kills: 0,
-            enemies: spots.iter().map(|&(x, y)| Enemy { x, y, hp: 2 }).collect(),
+            enemies: spots.iter().enumerate().map(|(i, &(x, y))| Enemy { x, y, hp: 2, cd: 1.5 + i as f32 * 0.45, kind: (i % 2) as u8 }).collect(),
             fwd: 0,
             turn: 0,
             fire_cd: 0.0,
@@ -287,7 +312,7 @@ impl Game for Doom {
         self.fire_held = down[0];
     }
 
-    fn update(&mut self, _t: &Trng) -> bool {
+    fn update(&mut self, t: &Trng) -> bool {
         if !self.alive || self.paused {
             return false;
         }
@@ -339,11 +364,14 @@ impl Game for Doom {
         }
         let (px, py) = (self.px, self.py);
         let mut hurt = false;
+        let mut shot_at_you = false;
         for e in self.enemies.iter_mut().filter(|e| e.hp > 0) {
             let (rx, ry) = (px - e.x, py - e.y);
             let d = (rx * rx + ry * ry).sqrt();
-            if d < 9.0 && d > 0.6 {
-                let (sx, sy) = (rx / d * 0.72 * dt, ry / d * 0.72 * dt);
+            let keep_away = if e.kind == 0 { 3.2 } else { 0.6 };
+            e.cd = (e.cd - dt).max(0.0);
+            if d < 10.0 && d > keep_away {
+                let (sx, sy) = (rx / d * 0.7 * dt, ry / d * 0.7 * dt);
                 if !is_wall(e.x + sx, e.y) {
                     e.x += sx;
                 }
@@ -354,6 +382,17 @@ impl Game for Doom {
             } else if d <= 0.6 {
                 hurt = true;
             }
+            // shooting: needs a clear line to you; one shot in three hits
+            if e.cd <= 0.0 && d < 8.0 && line_clear(e.x, e.y, px, py) {
+                e.cd = 2.2 + (crate::rng::below(t, 100).unwrap_or(0) as f32) / 60.0;
+                if crate::rng::below(t, 3).unwrap_or(0) == 0 {
+                    shot_at_you = true;
+                }
+                self.snd = Some(Snd::Tick);
+            }
+        }
+        if shot_at_you {
+            hurt = true;
         }
         if hurt && self.hurt_cd <= 0.0 {
             self.hp -= 1;
@@ -374,12 +413,11 @@ impl Game for Doom {
     }
 
     fn draw(&self, c: &mut Canvas, _best: u32) {
-        c.text(0, 0, &format!("E1M{} HP {} KILLS {}/{}", self.level + 1, self.hp.max(0), self.kills, self.enemies.len()));
         let (dx, dy) = (self.a.cos(), self.a.sin());
         let (plx, ply) = (-dy * 0.66, dx * 0.66);
         let mid = VIEW_TOP + VIEW_H / 2;
         // ---- floor and ceiling: a light dither, denser towards the viewer (kept cheap so the frame rate stays high)
-        for y in VIEW_TOP..64 {
+        for y in VIEW_TOP..=VIEW_BOT {
             let dist = (y - mid).abs();
             if dist < 2 {
                 continue;
@@ -423,15 +461,25 @@ impl Game for Doom {
                     break;
                 }
             }
+            let hit = map().get(my.max(0) as usize).map(|r| r.as_bytes().get(mx.max(0) as usize).copied().unwrap_or(b'#')).unwrap_or(b'#');
             let perp = (if side == 0 { sdx - ddx } else { sdy - ddy }).max(0.05);
             zbuf[col] = perp;
             let h = ((VIEW_H as f32) / perp) as i32;
             let y0 = (mid - h / 2).max(VIEW_TOP);
-            let y1 = (mid + h / 2).min(63);
+            let y1 = (mid + h / 2).min(VIEW_BOT);
             let level = if perp < 1.6 { 0 } else if perp < 3.2 { 1 } else if perp < 5.5 { 2 } else { 3 };
             let level = if side == 1 && level < 3 { level + 1 } else { level };
             let x = (col * 2) as i32;
-            if level == 0 {
+            if hit == b'%' {
+                // slime pit wall: vertical stripes
+                for y in y0..=y1 {
+                    for xx in x..x + 2 {
+                        if y == y0 || y == y1 || (xx / 2 + level as i32) % 2 == 0 {
+                            c.dot(xx, y, true);
+                        }
+                    }
+                }
+            } else if level == 0 {
                 c.fill_rect(x as usize, y0 as usize, 2, (y1 - y0 + 1).max(1) as usize, true);
             } else {
                 for y in y0..=y1 {
@@ -459,7 +507,7 @@ impl Game for Doom {
             let h = ((VIEW_H as f32) / ty) as i32;
             let w = (h * 6 / 10).max(2);
             let top = (mid - h / 2).max(VIEW_TOP);
-            let bot = (mid + h / 2).min(63);
+            let bot = (mid + h / 2).min(VIEW_BOT);
             let left = sx - w / 2;
             for xx in left..(sx + w / 2) {
                 let col = (xx / 2) as usize;
@@ -477,28 +525,35 @@ impl Game for Doom {
                 }
             }
         }
-        // ---- minimap (top right, 2 pixels per cell): walls, blinking enemies, you = big blinking dot with a pointer
+        // ---- minimap (top right): the 16 x 16 cells around you at 2 pixels per cell. You are always in the middle
+        // as a big blinking square with a pointer; enemies blink as dots.
         {
-            let (mx0, my0) = (95i32, 12i32);
+            let (mx0, my0) = (95i32, 1i32);
             c.fill_rect((mx0 - 1) as usize, (my0 - 1) as usize, 34, 34, false);
             c.rect((mx0 - 1) as usize, (my0 - 1) as usize, 34, 34);
+            let (ox, oy) = (self.px as i32 - 8, self.py as i32 - 8);
             for (yy, row) in map().iter().enumerate() {
+                let j = yy as i32 - oy;
+                if !(0..16).contains(&j) {
+                    continue;
+                }
                 for (xx, ch) in row.bytes().enumerate() {
-                    if ch == b'#' {
-                        c.fill_rect((mx0 + xx as i32 * 2) as usize, (my0 + yy as i32 * 2) as usize, 2, 2, true);
+                    let i = xx as i32 - ox;
+                    if ch != b'.' && (0..16).contains(&i) {
+                        c.fill_rect((mx0 + i * 2) as usize, (my0 + j * 2) as usize, 2, 2, true);
                     }
                 }
             }
-            let blink = (self.born.elapsed().as_millis() / 250) % 2 == 0;
-            for e in self.enemies.iter().filter(|e| e.hp > 0) {
-                if blink {
-                    let (ex, ey) = (mx0 + (e.x * 2.0) as i32, my0 + (e.y * 2.0) as i32);
-                    c.dot(ex, ey, true);
-                    c.dot(ex + 1, ey, false);
+            if (self.born.elapsed().as_millis() / 250) % 2 == 0 {
+                for e in self.enemies.iter().filter(|e| e.hp > 0) {
+                    let (ex, ey) = (((e.x - ox as f32) * 2.0) as i32, ((e.y - oy as f32) * 2.0) as i32);
+                    if (0..32).contains(&ex) && (0..32).contains(&ey) {
+                        c.dot(mx0 + ex, my0 + ey, true);
+                        c.dot(mx0 + ex + 1, my0 + ey, false);
+                    }
                 }
             }
-            // you: a 3x3 dark square with a bright centre and a line showing where you look (always visible)
-            let (pxm, pym) = (mx0 + (self.px * 2.0) as i32, my0 + (self.py * 2.0) as i32);
+            let (pxm, pym) = (mx0 + ((self.px - ox as f32) * 2.0) as i32, my0 + ((self.py - oy as f32) * 2.0) as i32);
             c.fill_rect((pxm - 2).max(0) as usize, (pym - 2).max(0) as usize, 5, 5, false);
             if (self.born.elapsed().as_millis() / 150) % 2 == 0 {
                 c.fill_rect((pxm - 1).max(0) as usize, (pym - 1).max(0) as usize, 3, 3, true);
@@ -515,27 +570,67 @@ impl Game for Doom {
             c.text(12, 28, "LEFT/RIGHT turn");
             c.text(12, 39, "OK shoot (hold)");
         }
-        // ---- crosshair and gun
+        // ---- crosshair and pistol (it bobs while you walk)
         c.dot(64, mid, true);
         c.dot(62, mid, true);
         c.dot(66, mid, true);
         c.dot(64, mid - 2, true);
         c.dot(64, mid + 2, true);
-        c.fill_rect(60, 58, 8, 6, true);
-        c.fill_rect(62, 54, 4, 5, true);
+        let bob = if self.move_v.abs() > 0.3 { ((self.born.elapsed().as_millis() as f32 / 110.0).sin() * 2.0) as i32 } else { 0 };
+        let gy = 40 + bob + (self.flash * 20.0) as i32; // the pistol kicks up when it fires
+        c.fill_rect(62, (gy + 1) as usize, 4, 5, true); // barrel
+        c.fill_rect(60, (gy + 6) as usize, 8, 4, true); // slide
+        c.fill_rect(61, (gy + 10) as usize, 6, (VIEW_BOT - gy - 9).max(1) as usize, true); // grip
+        c.fill_rect(63, (gy + 2) as usize, 2, 3, false); // muzzle hole
         if self.flash > 0.0 {
-            c.line(64, 53, 58, 46);
-            c.line(64, 53, 70, 46);
-            c.line(64, 53, 64, 44);
+            c.line(64, gy, 58, gy - 7);
+            c.line(64, gy, 70, gy - 7);
+            c.line(64, gy, 64, gy - 9);
         }
         if self.hurt_cd > 0.4 {
-            c.invert_rect(0, VIEW_TOP as usize, 128, 52);
+            c.invert_rect(0, VIEW_TOP as usize, 128, 54);
         }
+        // ---- status bar: health, face, level and kills
+        c.fill_rect(0, 54, 128, 10, false);
+        c.fill_rect(0, 54, 128, 1, true);
+        let pct = (self.hp.max(0) * 100 / MAX_HP) as u32;
+        c.text(1, 54, &format!("{}%", pct));
+        c.rect(59, 54, 10, 10);
+        if self.hp <= 0 {
+            c.dot(62, 57, true);
+            c.dot(63, 58, true);
+            c.dot(66, 57, true);
+            c.dot(65, 58, true);
+            c.line(62, 61, 66, 62);
+        } else {
+            c.dot(62, 57, true);
+            c.dot(66, 57, true);
+            if self.hurt_cd > 0.3 {
+                c.dot(64, 61, true);
+                c.dot(64, 62, true); // ouch
+            } else if pct > 60 {
+                c.dot(62, 61, true);
+                c.dot(63, 62, true);
+                c.dot(64, 62, true);
+                c.dot(65, 62, true);
+                c.dot(66, 61, true);
+            } else if pct > 30 {
+                c.line(62, 61, 66, 61);
+            } else {
+                c.dot(62, 62, true);
+                c.dot(63, 61, true);
+                c.dot(64, 61, true);
+                c.dot(65, 61, true);
+                c.dot(66, 62, true);
+                c.dot(60, 60, true); // blood
+            }
+        }
+        c.text(78, 54, &format!("E1M{} {}/{}", self.level + 1, self.kills, self.enemies.len()));
         if !self.alive {
             c.fill_rect(6, 16, 116, 42, false);
             c.rect(6, 16, 116, 42);
             c.text_big(12, 19, if self.won { "CLEARED!" } else { "YOU DIED" }, 2);
-            c.text(12, 44, "OK retry  BACK exit");
+            c.text(12, 44, if self.won { "OK = next level" } else { "OK retry  BACK exit" });
         }
     }
 

@@ -13,8 +13,8 @@ use std::time::{Duration, Instant};
 
 use crate::oled::{Canvas, Frame, Panel, H, W};
 
-const REFRESH_MS: u32 = 10_000; // full resend (no display-off) to heal any glitch
-const MIN_GAP_MS: u32 = 50; // at most 20 pushes per second
+const REFRESH_MS: u32 = 3_000; // every 3 s: send the OLED settings again and resend the whole picture (heals a power glitch)
+const MIN_GAP_MS: u32 = 24; // at most about 40 pushes per second
 const REINIT_AFTER_FAILS: u32 = 3;
 
 struct Shared {
@@ -92,13 +92,17 @@ fn thread_main(sh: Arc<Shared>, ready: std::sync::mpsc::Sender<bool>) {
     let tt = ticktimer::Ticktimer::new().unwrap();
     let mut panel = Panel::new();
     sh.busy_since.store(1, Ordering::SeqCst);
-    let ok = panel.init();
+    let mut ok = panel.init();
     sh.busy_since.store(0, Ordering::SeqCst);
     sh.present.store(ok, Ordering::SeqCst);
-    ready.send(ok).ok();
-    if !ok {
-        return;
+    ready.send(true).ok(); // even without an answer we keep trying: the OLED may be plugged in later
+    while !ok {
+        tt.sleep_ms(1000).ok();
+        sh.busy_since.store(now_ms(&sh) + 1, Ordering::SeqCst);
+        ok = panel.init();
+        sh.busy_since.store(0, Ordering::SeqCst);
     }
+    sh.present.store(true, Ordering::SeqCst);
     let mut shown = u32::MAX;
     let mut last_full = now_ms(&sh);
     let mut last_push = 0u32;
@@ -114,15 +118,17 @@ fn thread_main(sh: Arc<Shared>, ready: std::sync::mpsc::Sender<bool>) {
                     local.copy_from_slice(&*f);
                 }
                 sh.busy_since.store(now + 1, Ordering::SeqCst);
+                let mut ok = true;
                 if due {
-                    panel.invalidate(); // resend everything, but never switch the panel off
+                    ok = panel.refresh_settings(); // settings again (no flicker) + resend everything
                     last_full = now;
                 }
-                let ok = panel.push(&local);
+                ok = ok && panel.push(&local);
                 let took = now_ms(&sh).saturating_sub(now);
                 sh.busy_since.store(0, Ordering::SeqCst);
                 crate::diag::STUCK_MS.store(0, Ordering::Relaxed);
                 crate::diag::max(&crate::diag::PUSH_MAX_MS, took);
+                crate::diag::DISP_BUSY_MS.fetch_add(took, Ordering::Relaxed);
                 last_push = now_ms(&sh);
                 if took > sh.max_ms.load(Ordering::Relaxed) {
                     sh.max_ms.store(took, Ordering::Relaxed);
@@ -142,7 +148,7 @@ fn thread_main(sh: Arc<Shared>, ready: std::sync::mpsc::Sender<bool>) {
                         sh.busy_since.store(0, Ordering::SeqCst);
                         consecutive_fails = 0;
                     }
-                    last_full = now_ms(&sh).saturating_sub(REFRESH_MS - 300); // full refresh in 0.3 s
+                    last_full = now_ms(&sh).saturating_sub(REFRESH_MS - 300); // settings + full picture again in 0.3 s
                 }
             }
         }));
@@ -150,6 +156,6 @@ fn thread_main(sh: Arc<Shared>, ready: std::sync::mpsc::Sender<bool>) {
             log::error!("display thread panic caught");
             sh.busy_since.store(0, Ordering::SeqCst);
         }
-        tt.sleep_ms(20).ok();
+        tt.sleep_ms(4).ok();
     }
 }

@@ -144,12 +144,13 @@ static LAB_ITEMS: [Item; 5] = [
     it("TRNG health", &I_BARS, "Noise picture and tests"),
     it("Notary", &I_KEY, "Sign events, PC verifies"),
 ];
-static SET_ITEMS: [Item; 7] = [
+static SET_ITEMS: [Item; 8] = [
     it("Screensaver", &I_BUN, "Pick what shows when idle"),
     it("Idle time", &I_STOPWATCH, "Seconds before it starts"),
     it("Sound on/off", &I_SPEAKER, "Mute or unmute"),
     it("Buzzer test", &I_SPEAKER, "Plays a C major scale"),
     it("Button test", &I_BUTTON, "Check all 6 buttons"),
+    it("CPU stats", &I_BARS, "Load, memory, features"),
     it("Diagnostics", &I_BARS, "Counters for debugging"),
     it("About", &I_INFO, "Version and chip facts"),
 ];
@@ -286,6 +287,7 @@ enum Screen {
     Game { idx: usize, g: Box<dyn Game> },
     Ball(Option<usize>),
     ButtonTest,
+    Stats { page: u8 },
     Diag,
     About,
 }
@@ -310,6 +312,7 @@ fn screen_code(s: &Screen) -> u32 {
         Screen::Tool(t) => 50 + crate::tools2::kind_index(t.kind) as u32,
         Screen::Ball(_) => 10,
         Screen::ButtonTest => 20,
+        Screen::Stats { .. } => 23,
         Screen::Diag => 21,
         Screen::About => 22,
         Screen::Game { idx, .. } => 30 + *idx as u32,
@@ -349,8 +352,9 @@ fn parent(s: &Screen) -> Screen {
         Screen::Game { idx, .. } => Screen::Menu(MenuId::Games, *idx),
         Screen::Ball(_) => Screen::Menu(MenuId::Games, 8),
         Screen::ButtonTest => Screen::Menu(MenuId::Settings, 4),
-        Screen::Diag => Screen::Menu(MenuId::Settings, 5),
-        Screen::About => Screen::Menu(MenuId::Settings, 6),
+        Screen::Stats { .. } => Screen::Menu(MenuId::Settings, 5),
+        Screen::Diag => Screen::Menu(MenuId::Settings, 6),
+        Screen::About => Screen::Menu(MenuId::Settings, 7),
     }
 }
 
@@ -405,7 +409,12 @@ struct App {
     last_input: Instant,
     saver: Option<Instant>,
     saver_kind: usize,
-    saver_track: usize,
+    player_spin: f32,
+    viz_pos: usize,
+    viz_note_at: Instant,
+    stat_at: Instant,
+    stat_prev: [u32; 6],
+    stat_view: [u32; 8], // app %, oled %, bio %, heap KB, peak KB, trng words/s, frames/s, typed chars
     song_ended: bool, // the song in the player finished: offer play again / next
     quit_ask: bool, // Button test / Button scope: BACK is a tested button, so quitting needs a second BACK
     idle_s: u64,
@@ -464,8 +473,13 @@ fn run(rx: Receiver<Input>) {
         rep_at: Instant::now(),
         last_input: Instant::now(),
         saver: None,
-        saver_kind: 0,
-        saver_track: 0,
+        saver_kind: 1, // Eyes
+        player_spin: 0.0,
+        viz_pos: usize::MAX,
+        viz_note_at: Instant::now(),
+        stat_at: Instant::now(),
+        stat_prev: [0; 6],
+        stat_view: [0; 8],
         quit_ask: false,
         song_ended: false,
         idle_s: 45,
@@ -519,6 +533,7 @@ fn run(rx: Receiver<Input>) {
             }
         }
         crate::diag::max(&crate::diag::LOOP_MAX_MS, loop_t0.elapsed().as_millis() as u32);
+        crate::diag::APP_BUSY_US.fetch_add(loop_t0.elapsed().as_micros() as u32, Ordering::Relaxed);
         // fixed-rate schedule
         next += Duration::from_millis(TICK_MS);
         let now = Instant::now();
@@ -809,6 +824,13 @@ impl App {
                     }
                 }
             }
+            Screen::Stats { page } => {
+                if matches!(b, Btn::Up | Btn::Down | Btn::Left | Btn::Right) {
+                    *page = (*page + 1) % 2;
+                    redraw = true;
+                    click = true;
+                }
+            }
             Screen::SaverPick => {
                 let n = crate::saver::COUNT;
                 match b {
@@ -1029,6 +1051,7 @@ impl App {
     // ------------------------------------------------------------------ actions
     fn type_text(&mut self, text: &str) {
         // errors (no USB host connected) are ignored on purpose
+        crate::diag::TYPED_CHARS.fetch_add(text.len() as u32, Ordering::Relaxed);
         self.usb.send_str(&crate::typing::as_us_keyboard(text)).ok();
     }
 
@@ -1115,8 +1138,12 @@ impl App {
                 self.toast("playing a scale");
             }
             (MenuId::Settings, 4) => self.goto(Screen::ButtonTest),
-            (MenuId::Settings, 5) => self.goto(Screen::Diag),
-            (MenuId::Settings, 6) => self.goto(Screen::About),
+            (MenuId::Settings, 5) => {
+                self.stat_at = Instant::now();
+                self.goto(Screen::Stats { page: 0 })
+            }
+            (MenuId::Settings, 6) => self.goto(Screen::Diag),
+            (MenuId::Settings, 7) => self.goto(Screen::About),
             _ => {}
         }
     }
@@ -1168,6 +1195,18 @@ impl App {
             self.dirty = true;
         }
         if let Screen::Player { playing, .. } = &mut self.screen {
+            if *playing {
+                let pos = sound::song_pos();
+                if pos != self.viz_pos {
+                    self.viz_pos = pos;
+                    self.viz_note_at = now;
+                }
+                if now.duration_since(self.anim_at) >= Duration::from_millis(40) {
+                    self.anim_at = now;
+                    self.player_spin += 0.16;
+                    self.dirty = true;
+                }
+            }
             if *playing && !self.snd.tune_active() {
                 *playing = false; // the song finished: stay here and ask, never jump into the screensaver
                 self.song_ended = true;
@@ -1176,12 +1215,6 @@ impl App {
             }
         }
         if self.saver.is_some() {
-            // the screensaver plays the songs one after the other: Closer, Blinding Lights, Attention, and again
-            if !self.snd.tune_active() && self.snd.enabled.load(std::sync::atomic::Ordering::Relaxed) {
-                let n = crate::music::TUNES.len();
-                self.snd.tune_fat(Some(crate::music::TUNES[self.saver_track % n].notes));
-                self.saver_track += 1;
-            }
             if now.duration_since(self.anim_at) >= Duration::from_millis(60) {
                 self.anim_at = now;
                 self.dirty = true;
@@ -1299,6 +1332,34 @@ impl App {
             Screen::Clock { .. } | Screen::Player { .. } | Screen::SaverPick => {
                 if now.duration_since(self.anim_at) >= Duration::from_millis(70) {
                     self.anim_at = now;
+                    self.dirty = true;
+                }
+            }
+            Screen::Stats { .. } => {
+                if now.duration_since(self.stat_at) >= Duration::from_millis(1000) {
+                    let el = now.duration_since(self.stat_at).as_millis().max(1) as u32;
+                    self.stat_at = now;
+                    use std::sync::atomic::Ordering::Relaxed;
+                    let cur = [
+                        crate::diag::APP_BUSY_US.load(Relaxed),
+                        crate::diag::DISP_BUSY_MS.load(Relaxed),
+                        crate::diag::SND_BUSY_MS.load(Relaxed),
+                        crate::diag::TRNG_WORDS.load(Relaxed),
+                        crate::diag::PUSHES.load(Relaxed),
+                        crate::diag::TICKS.load(Relaxed),
+                    ];
+                    let d = |i: usize| cur[i].wrapping_sub(self.stat_prev[i]);
+                    self.stat_view = [
+                        (d(0) / 10 / el).min(100),      // microseconds busy / (ms * 1000) * 100
+                        (d(1) * 100 / el).min(100),
+                        (d(2) * 100 / el).min(100),
+                        crate::diag::HEAP_USED.load(Relaxed) / 1024,
+                        crate::diag::HEAP_PEAK.load(Relaxed) / 1024,
+                        d(3) * 1000 / el,
+                        d(4) * 1000 / el,
+                        crate::diag::TYPED_CHARS.load(Relaxed),
+                    ];
+                    self.stat_prev = cur;
                     self.dirty = true;
                 }
             }
@@ -1438,22 +1499,27 @@ impl App {
             }
             Screen::Player { idx, playing } => {
                 let t = &crate::music::TUNES[*idx];
-                oled.card(0, 0, 128, 13);
-                oled.text(4, 0, t.title);
-                oled.text(4, 16, t.by);
-                // equalizer bars that dance while it plays
-                let ms = self.started.elapsed().as_millis() as u32;
-                for i in 0..16u32 {
-                    let h = if *playing { 3 + ((ms / 90 + i * 37 + i * i).wrapping_mul(2654435761u32) >> 28) as usize * 2 } else { 2 };
-                    oled.fill_rect((i * 8 + 1) as usize, 50 - h.min(24), 6, h.min(24), true);
-                }
-                if self.song_ended {
-                    oled.fill_rect(8, 24, 112, 22, false);
-                    oled.rect(8, 24, 112, 22);
-                    oled.text(36, 26, "Song ended");
-                    oled.text(14, 36, "OK again  > next");
-                }
-                oled.text(0, 54, if *playing { "OK stop  <> song" } else { "OK play  <> song" });
+                let total_ms: u32 = t.notes.iter().map(|n| n.1 + 10).sum();
+                let done_ms: u32 = if self.song_ended {
+                    total_ms
+                } else if *playing {
+                    t.notes.iter().take(sound::song_pos()).map(|n| n.1 + 10).sum()
+                } else {
+                    0
+                };
+                let v = crate::player::View {
+                    title: t.title,
+                    by: t.by,
+                    playing: *playing,
+                    ended: self.song_ended,
+                    spin: self.player_spin,
+                    hz: if *playing { sound::cur_hz() } else { 0 },
+                    since_ms: self.viz_note_at.elapsed().as_millis() as u32,
+                    t_ms: self.started.elapsed().as_millis() as u32,
+                    elapsed_s: done_ms / 1000,
+                    total_s: total_ms / 1000,
+                };
+                crate::player::draw(oled, &v);
             }
             Screen::Mandel(m) => {
                 for y in 0..crate::mandel::H {
@@ -1563,6 +1629,28 @@ impl App {
                     oled.text(col * 66, 13 + 13 * row, &format!("{:<5}{}", BTN_NAMES[i], state));
                 }
                 oled.text(0, 52, "BACK twice = quit");
+            }
+            Screen::Stats { page } => {
+                let v = &self.stat_view;
+                let bar = |c: &mut Canvas, y: usize, label: &str, pct: u32| {
+                    c.text(0, y, label);
+                    c.rect(48, y + 2, 54, 8);
+                    c.fill_rect(49, y + 3, (52 * pct.min(100) / 100) as usize, 6, true);
+                    c.text(104, y, &format!("{}%", pct));
+                };
+                if *page == 0 {
+                    oled.text(0, 0, "CPU stats 1/2");
+                    bar(oled, 12, "App CPU", v[0]);
+                    bar(oled, 24, "OLED I2C", v[1]);
+                    bar(oled, 36, "BIO tone", v[2]);
+                    oled.text(0, 50, &format!("Heap {}K peak {}K", v[3], v[4]));
+                } else {
+                    oled.text(0, 0, "Chip in use 2/2");
+                    oled.text(0, 12, "RISC-V CPU: app+OS");
+                    oled.text(0, 24, &format!("BIO 1 of 4: tone"));
+                    oled.text(0, 36, &format!("TRNG {} words/s", v[5]));
+                    oled.text(0, 50, &format!("OLED {} fps USB {}", v[6], v[7]));
+                }
             }
             Screen::Diag => {
                 let (ok, bad, slow) = disp.stats();

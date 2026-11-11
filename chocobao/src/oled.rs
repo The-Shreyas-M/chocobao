@@ -297,6 +297,13 @@ impl Panel {
         self.cmds(&[0xAE]) && self.cmds(INIT) && self.cmds(&[0xAF])
     }
 
+    /// Re-send the settings without switching the panel off (no flicker). If the OLED lost power for a moment
+    /// (USB unplugged and plugged, a brown-out) it forgot them and shows nothing; this brings it back.
+    pub fn refresh_settings(&mut self) -> bool {
+        self.sent_valid = false;
+        self.cmds(INIT) && self.cmds(&[0xAF])
+    }
+
     /// Make the next `push` resend everything.
     pub fn invalidate(&mut self) { self.sent_valid = false; }
 
@@ -326,6 +333,11 @@ impl Panel {
             if !ok {
                 // one immediate retry before giving up on this frame
                 ok = matches!(self.i2c.i2c_write(ADDR, 0x80, &buf), Ok(I2cResult::Ack(_)));
+            }
+            if !ok {
+                // the OLED did not answer: report it (the display thread re-initialises it) and resend everything later
+                self.sent_valid = false;
+                return false;
             }
             self.sent[page * W + c0..page * W + c1 + 1].copy_from_slice(&new[c0..=c1]);
         }

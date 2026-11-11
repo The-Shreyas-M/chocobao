@@ -32,6 +32,8 @@ use crate::rng;
 use crate::sound::{self, Sound};
 
 const TICK_MS: u64 = 16;
+/// Stage switch while the ReRAM saving is being proven on the real board.
+const PERSIST_WRITES: bool = false;
 const WATCHDOG_MS: u32 = 20_000; // only a truly dead display bus should restart the app
 const WIPE_MS: u128 = 180;
 const IDLE_CHOICES: [u64; 7] = [15, 30, 45, 90, 180, 600, 0]; // idle seconds before the screensaver (0 = never)
@@ -73,6 +75,7 @@ enum MenuId {
     MusicTools,
     Lab,
     Settings,
+    Power,
 }
 
 struct Item {
@@ -83,12 +86,18 @@ struct Item {
 
 const fn it(label: &'static str, icon: &'static [u8; 8], desc: &'static str) -> Item { Item { label, icon, desc } }
 
-static MAIN_ITEMS: [Item; 5] = [
+static MAIN_ITEMS: [Item; 6] = [
     it("Tools", &I_TOOLBOX, "Passwords, calc, timers.."),
-    it("Games", &I_GAMEPAD, "20 games, Doom, Pac-Man"),
+    it("Games", &I_GAMEPAD, "27 games, Doom, Ninja.."),
     it("Music", &I_SPEAKER, "Tunes on the buzzer"),
     it("Lab", &I_FLASK, "Experiments"),
     it("Settings", &I_GEAR, "Saver, sound, tests, about"),
+    it("Power", &I_BOLT, "Sleep, restart, shut down"),
+];
+static POWER_ITEMS: [Item; 3] = [
+    it("Sleep", &I_INFO, "Screen off, any key wakes"),
+    it("Restart", &I_BOLT, "Reboot the whole chip"),
+    it("Shut down", &I_BOLT, "Save, screen off"),
 ];
 static UTIL_ITEMS: [Item; 17] = [
     it("Password maker", &I_KEY, "Rules for any website"),
@@ -154,12 +163,13 @@ static TRACK_ITEMS: [Item; 5] = [
     it("AURA", &I_SPEAKER, "Ogryzek"),
 ];
 static MTOOL_ITEMS: [Item; 1] = [it("Metronome", &I_HOURGLASS, "Tempo clicks, beats")];
-static LAB_ITEMS: [Item; 5] = [
+static LAB_ITEMS: [Item; 6] = [
     it("Mandelbrot", &I_BUN, "Endless fractal zoom"),
     it("SOS beeps", &I_SPEAKER, "Morse SOS on the buzzer"),
     it("Button scope", &I_BARS, "Waveforms of 6 buttons"),
     it("TRNG health", &I_BARS, "Noise picture and tests"),
     it("Notary", &I_KEY, "Sign events, PC verifies"),
+    it("MMU probe", &I_KEY, "Ask the kernel for pages"),
 ];
 static SET_ITEMS: [Item; 8] = [
     it("Screensaver", &I_BUN, "Pick what shows when idle"),
@@ -182,6 +192,7 @@ fn items(m: MenuId) -> &'static [Item] {
         MenuId::MusicTools => &MTOOL_ITEMS,
         MenuId::Lab => &LAB_ITEMS,
         MenuId::Settings => &SET_ITEMS,
+        MenuId::Power => &POWER_ITEMS,
     }
 }
 
@@ -195,6 +206,7 @@ fn menu_title(m: MenuId) -> &'static str {
         MenuId::MusicTools => "Music tools",
         MenuId::Lab => "Lab",
         MenuId::Settings => "Settings",
+        MenuId::Power => "Power",
     }
 }
 
@@ -309,8 +321,37 @@ enum Screen {
     Ball(Option<usize>),
     ButtonTest,
     Stats { page: u8 },
+    Sleep(bool),       // screen off; true = pressing a key restarts the chip (after Shut down)
+    Shutdown(Instant), // "saved, safe to unplug" for two seconds, then the screen goes off
+    Mmu { results: Vec<(String, String)> },
     Diag,
     About,
+}
+
+/// Ask the Xous kernel for physical pages that belong to someone else. The memory management unit and the kernel's
+/// ownership table are what answer: a page already owned by another process (or the kernel) is refused. These are the
+/// kernel's real replies, nothing here is simulated. Pages we map are read-only and released right away; we never read them.
+fn mmu_probe() -> Vec<(String, String)> {
+    fn ask(name: &str, phys: usize) -> (String, String) {
+        let verdict = match xous::map_memory(xous::MemoryAddress::new(phys), None, 4096, xous::MemoryFlags::R) {
+            Ok(range) => {
+                let _ = xous::unmap_memory(range);
+                "MAPPED".to_string()
+            }
+            Err(e) => {
+                log::info!("mmu probe {} @ {:x}: {:?}", name, phys, e);
+                "DENIED".to_string()
+            }
+        };
+        log::info!("mmu probe {} @ {:x}: {}", name, phys, verdict);
+        (name.to_string(), verdict)
+    }
+    vec![
+        ask("Kernel RAM", 0x6100_0000),
+        ask("HAL I2C RAM", bao1x_hal::board::I2C_IFRAM_ADDR),
+        ask("USB buffers", utralib::HW_IFRAM0_MEM),
+        ask("Own save page", 0x6000_0000 + 0x3D_9000),
+    ]
 }
 
 fn screen_code(s: &Screen) -> u32 {
@@ -334,6 +375,9 @@ fn screen_code(s: &Screen) -> u32 {
         Screen::Ball(_) => 10,
         Screen::ButtonTest => 20,
         Screen::Stats { .. } => 23,
+        Screen::Sleep(_) => 24,
+        Screen::Shutdown(_) => 25,
+        Screen::Mmu { .. } => 26,
         Screen::Diag => 21,
         Screen::About => 22,
         Screen::Game { idx, .. } => 30 + *idx as u32,
@@ -353,6 +397,9 @@ fn parent(s: &Screen) -> Screen {
         Screen::Menu(MenuId::MusicTools, _) => Screen::Menu(MenuId::Music, 1),
         Screen::Menu(MenuId::Lab, _) => Screen::Menu(MenuId::Main, 3),
         Screen::Menu(MenuId::Settings, _) => Screen::Menu(MenuId::Main, 4),
+        Screen::Menu(MenuId::Power, _) => Screen::Menu(MenuId::Main, 5),
+        Screen::Sleep(_) | Screen::Shutdown(_) => Screen::Home,
+        Screen::Mmu { .. } => Screen::Menu(MenuId::Lab, 5),
         Screen::Help { then, .. } => match then {
             Then::Game(i) => Screen::Menu(MenuId::Games, game_pos(*i)),
             Then::Open(b) => parent(b),
@@ -439,6 +486,8 @@ struct App {
     stat_prev: [u32; 6],
     stat_view: [u32; 8], // app %, oled %, bio %, heap KB, peak KB, trng words/s, frames/s, typed chars
     song_ended: bool, // the song in the player finished: offer play again / next
+    store: Option<crate::store::Store>,
+    save_at: Option<Instant>,
     quit_ask: bool, // Button test / Button scope: BACK is a tested button, so quitting needs a second BACK
     idle_s: u64,
     invert: bool,
@@ -503,6 +552,8 @@ fn run(rx: Receiver<Input>) {
         stat_at: Instant::now(),
         stat_prev: [0; 6],
         stat_view: [0; 8],
+        store: None,
+        save_at: None,
         quit_ask: false,
         song_ended: false,
         idle_s: 45,
@@ -512,6 +563,17 @@ fn run(rx: Receiver<Input>) {
         dirty: true,
         last_secs: 0,
     };
+    // restore the saved settings (screensaver, idle time, sound, high scores, levels, seen help screens)
+    // while the ReRAM saving is proven on the real board it only runs when a button is held at power-on:
+    // UP = step 1 (claim the ReRAM controller), RIGHT = step 2 (also map the settings page), LEFT = step 3 (also read it)
+    let stage = if held[bidx(Btn::Left)] { 3 } else if held[bidx(Btn::Right)] { 2 } else if held[bidx(Btn::Up)] { 1 } else { 0 };
+    let opened = if stage == 0 { None } else { std::panic::catch_unwind(AssertUnwindSafe(|| crate::store::Store::open(stage))).ok().flatten() };
+    if let Some((st, saved)) = opened {
+        app.store = Some(st);
+        if let Some(s) = saved {
+            app.apply_saved(&s, no_sound);
+        }
+    }
     crate::diag::init();
     let mut next = Instant::now();
     loop {
@@ -572,6 +634,79 @@ fn run(rx: Receiver<Input>) {
 }
 
 impl App {
+    fn snapshot(&self) -> crate::store::Saved {
+        let mut s = crate::store::Saved::default();
+        s.idle_idx = IDLE_CHOICES.iter().position(|&v| v == self.idle_s).unwrap_or(2) as u8;
+        s.saver = self.saver_kind as u8;
+        s.sound = self.snd.enabled.load(Ordering::Relaxed);
+        s.doom = crate::doom::level() as u8;
+        s.maze = crate::games2::maze_level() as u8;
+        s.ninja = crate::games2::ninja_level() as u8;
+        for i in 0..32 {
+            s.best[i] = self.best[i].min(u16::MAX as u32) as u16;
+        }
+        for (i, seen) in self.help_seen.iter().enumerate() {
+            if *seen && i < 64 {
+                s.help[i / 8] |= 1 << (i % 8);
+            }
+        }
+        s
+    }
+
+    fn apply_saved(&mut self, s: &crate::store::Saved, keep_sound_off: bool) {
+        if let Some(&v) = IDLE_CHOICES.get(s.idle_idx as usize) {
+            self.idle_s = v;
+        }
+        self.saver_kind = (s.saver as usize).min(crate::saver::COUNT - 1);
+        if !keep_sound_off {
+            self.snd.enabled.store(s.sound, Ordering::Relaxed);
+        }
+        crate::doom::set_level(s.doom as usize);
+        crate::games2::set_maze_level(s.maze as usize);
+        crate::games2::set_ninja_level(s.ninja as usize);
+        for i in 0..32 {
+            self.best[i] = s.best[i] as u32;
+        }
+        for i in 0..self.help_seen.len().min(64) {
+            self.help_seen[i] = s.help[i / 8] & (1 << (i % 8)) != 0;
+        }
+    }
+
+    /// Save changed settings to the ReRAM about 0.3 s after the last change (quick, and typing a burst of changes
+    /// costs one write). Nothing is written when nothing changed.
+    fn autosave(&mut self, now: Instant) {
+        if self.store.is_none() || !PERSIST_WRITES {
+            return;
+        }
+        let cur = self.snapshot();
+        let changed = self.store.as_ref().map_or(false, |s| s.last != cur);
+        if !changed {
+            self.save_at = None;
+            return;
+        }
+        match self.save_at {
+            None => self.save_at = Some(now + Duration::from_millis(300)),
+            Some(t) if now >= t => {
+                if let Some(st) = self.store.as_mut() {
+                    st.save(&cur);
+                }
+                self.save_at = None;
+            }
+            _ => {}
+        }
+    }
+
+    /// Write right now (before a restart or shut down).
+    fn flush_settings(&mut self) {
+        let cur = self.snapshot();
+        if let Some(st) = self.store.as_mut() {
+            if st.last != cur {
+                st.save(&cur);
+            }
+        }
+        self.save_at = None;
+    }
+
     /// Switch screens (with a short wipe from the old picture to the new one).
     fn goto(&mut self, s: Screen) {
         crate::diag::SCREEN.store(screen_code(&s), Ordering::Relaxed);
@@ -681,6 +816,19 @@ impl App {
     // ------------------------------------------------------------------ input
     fn on_input(&mut self, inp: Input) {
         self.last_input = Instant::now();
+        if let Screen::Sleep(restart) = &self.screen {
+            if matches!(inp, Input::Press(_)) {
+                if *restart {
+                    crate::bootmode::restart_soc(true); // after "Shut down" a key press is like switching on again
+                } else {
+                    if let Some(d) = &self.display {
+                        d.power(true);
+                    }
+                    self.goto(Screen::Home);
+                }
+            }
+            return;
+        }
         if self.saver.is_some() {
             // any button wakes the screen; the press itself is swallowed and everything resumes where it was
             self.saver = None;
@@ -1099,6 +1247,25 @@ impl App {
             (MenuId::Main, 2) => self.goto(Screen::Menu(MenuId::Music, 0)),
             (MenuId::Main, 3) => self.goto(Screen::Menu(MenuId::Lab, 0)),
             (MenuId::Main, 4) => self.goto(Screen::Menu(MenuId::Settings, 0)),
+            (MenuId::Main, 5) => self.goto(Screen::Menu(MenuId::Power, 0)),
+            (MenuId::Power, 0) => {
+                self.flush_settings();
+                self.snd.silence();
+                if let Some(d) = &self.display {
+                    d.power(false);
+                }
+                self.goto(Screen::Sleep(false));
+            }
+            (MenuId::Power, 1) => {
+                self.flush_settings();
+                self.toast("restarting...");
+                crate::bootmode::restart_soc(true);
+            }
+            (MenuId::Power, 2) => {
+                self.flush_settings();
+                self.snd.silence();
+                self.goto(Screen::Shutdown(Instant::now()));
+            }
             (MenuId::Utilities, 0) => {
                 let prof = 0;
                 let len = rng::PROFILES[prof].default_len;
@@ -1148,6 +1315,7 @@ impl App {
             (MenuId::Lab, 2) => self.open_tool(crate::tools2::Kind::Scope),
             (MenuId::Lab, 3) => self.open_tool(crate::tools2::Kind::Health),
             (MenuId::Lab, 4) => self.open_tool(crate::tools2::Kind::Notary),
+            (MenuId::Lab, 5) => self.goto(Screen::Mmu { results: mmu_probe() }),
             (MenuId::MusicTracks, 0..=4) => {
                 self.snd.silence();
                 self.song_ended = false;
@@ -1213,12 +1381,14 @@ impl App {
     // ------------------------------------------------------------------ timers
     fn tick(&mut self) {
         let now = Instant::now();
+        self.autosave(now);
         let mut to_home = false;
         let mut alarm = false;
         // screensaver: after SAVER_S seconds without a button the screen goes to a moving bun, and games pause
         let idle_ok = !matches!(self.screen, Screen::Boot(_))
             && !matches!(self.screen, Screen::Timer { running: true, .. })
             && !matches!(self.screen, Screen::Timer { done: true, .. })
+            && !matches!(self.screen, Screen::Sleep(_) | Screen::Shutdown(_))
             && !matches!(self.screen, Screen::Player { playing: true, .. }); // a song plays to its end first
         if self.saver.is_none() && idle_ok && self.idle_s > 0 && now.duration_since(self.last_input) > Duration::from_secs(self.idle_s) {
             self.saver = Some(now);
@@ -1229,6 +1399,16 @@ impl App {
             }
             self.snd.silence();
             self.dirty = true;
+        }
+        if let Screen::Shutdown(t0) = &self.screen {
+            if now.duration_since(*t0) > Duration::from_millis(2000) {
+                if let Some(d) = &self.display {
+                    d.power(false);
+                }
+                self.screen = Screen::Sleep(true);
+            } else {
+                self.dirty = true;
+            }
         }
         if let Screen::Player { playing, .. } = &mut self.screen {
             if *playing {
@@ -1662,6 +1842,20 @@ impl App {
                     oled.text(col * 66, 13 + 13 * row, &format!("{:<5}{}", BTN_NAMES[i], state));
                 }
                 oled.text(0, 52, "BACK twice = quit");
+            }
+            Screen::Shutdown(_) => {
+                oled.text(14, 12, "Settings saved");
+                oled.text(14, 28, "Safe to unplug");
+                oled.text(14, 44, "any key = start");
+            }
+            Screen::Sleep(_) => {}
+            Screen::Mmu { results } => {
+                oled.text(0, 0, "MMU probe: the kernel");
+                for (i, (what, verdict)) in results.iter().enumerate().take(4) {
+                    oled.text(0, 12 + 12 * i, what);
+                    oled.text(78, 12 + 12 * i, verdict);
+                }
+                oled.text(0, 56, "real answers, live");
             }
             Screen::Stats { page } => {
                 let v = &self.stat_view;

@@ -23,6 +23,7 @@ struct Shared {
     taken: AtomicU32, // the `seq` of the picture the display thread last copied
     busy_since: AtomicU32, // 0 = idle, otherwise ms since `t0` (+1)
     present: AtomicBool,
+    power: AtomicBool, // false = panel switched off (sleep / shut down)
     pushes: AtomicU32,
     fails: AtomicU32,
     max_ms: AtomicU32,
@@ -43,6 +44,7 @@ impl Display {
             taken: AtomicU32::new(0),
             busy_since: AtomicU32::new(0),
             present: AtomicBool::new(false),
+            power: AtomicBool::new(true),
             pushes: AtomicU32::new(0),
             fails: AtomicU32::new(0),
             max_ms: AtomicU32::new(0),
@@ -67,6 +69,9 @@ impl Display {
         }
         self.sh.seq.fetch_add(1, Ordering::SeqCst);
     }
+
+    /// Switch the panel off or on again (off = sleep or shut down; the picture is resent when it comes back).
+    pub fn power(&self, on: bool) { self.sh.power.store(on, Ordering::SeqCst); }
 
     /// True when the display thread has picked up the last picture, so drawing the next one is useful.
     pub fn ready(&self) -> bool { self.sh.taken.load(Ordering::SeqCst) == self.sh.seq.load(Ordering::SeqCst) }
@@ -117,7 +122,22 @@ fn thread_main(sh: Arc<Shared>, ready: std::sync::mpsc::Sender<bool>) {
     let mut gap_ms = MIN_GAP_MS; // grows with the time a push takes, so the I2C bus never hogs the CPU
     let mut consecutive_fails = 0u32;
     let mut local: Frame = [0; W * H / 8];
+    let mut powered = true;
     loop {
+        let want = sh.power.load(Ordering::SeqCst);
+        if want != powered {
+            powered = want;
+            if powered {
+                panel.refresh_settings(); // wake: settings again, whole picture again
+                shown = u32::MAX;
+            } else {
+                panel.display_off();
+            }
+        }
+        if !powered {
+            tt.sleep_ms(30).ok();
+            continue;
+        }
         let r = catch_unwind(AssertUnwindSafe(|| {
             let now = now_ms(&sh);
             let seq = sh.seq.load(Ordering::SeqCst);

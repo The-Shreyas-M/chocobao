@@ -158,6 +158,9 @@ const SPOTS: [&[(f32, f32)]; 4] = [
 ];
 
 static LEVEL: AtomicUsize = AtomicUsize::new(0);
+
+pub fn level() -> usize { LEVEL.load(Ordering::Relaxed) }
+pub fn set_level(l: usize) { LEVEL.store(l % 5, Ordering::Relaxed) }
 static TUTORIAL_SEEN: AtomicBool = AtomicBool::new(false); // the how-to is shown once, before level 1
 
 fn map() -> &'static [&'static str] {

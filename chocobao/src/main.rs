@@ -14,6 +14,7 @@ mod music;
 mod player;
 mod rng;
 mod saver;
+mod store;
 mod seed;
 mod sound;
 mod tools2;

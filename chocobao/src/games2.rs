@@ -1987,6 +1987,8 @@ impl Game for Lander {
 
 // ---------------------------------------------------------------- 10 Maze (three levels, each bigger)
 static MAZE_LEVEL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+pub fn maze_level() -> usize { MAZE_LEVEL.load(std::sync::atomic::Ordering::Relaxed) }
+pub fn set_maze_level(l: usize) { MAZE_LEVEL.store(l % 3, std::sync::atomic::Ordering::Relaxed) }
 /// (columns, rows, pixels per cell) per level; all fit inside 128 x 52.
 const MAZE_SIZES: [(usize, usize, usize); 3] = [(31, 13, 4), (41, 17, 3), (61, 25, 2)];
 
@@ -3963,6 +3965,9 @@ struct NEnt {
 }
 
 static NINJA_LEVEL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+pub fn ninja_level() -> usize { NINJA_LEVEL.load(std::sync::atomic::Ordering::Relaxed) }
+pub fn set_ninja_level(l: usize) { NINJA_LEVEL.store(l % 3, std::sync::atomic::Ordering::Relaxed) }
 
 pub struct Ninja {
     ground: Vec<u8>,     // top row of the ground per tile column (8 = a hole)

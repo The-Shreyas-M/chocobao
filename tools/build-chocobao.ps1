@@ -26,4 +26,8 @@ Push-Location $xous
 try { cargo xtask dabao chocobao; if ($LASTEXITCODE) { throw "build failed ($LASTEXITCODE)" } } finally { Pop-Location }
 
 $rel = Join-Path $xous 'target\riscv32imac-unknown-xous-elf\release'
+# the last 4 KiB page of the app region (0x3D9000) stores the settings: the image must stay below it
+$img = (Get-Item (Join-Path $rel 'apps.img')).Length
+if ($img -gt 0xD8000) { throw ('apps.img is {0} bytes, over the {1} limit: it would overwrite the settings page' -f $img, 0xD8000) }
+Write-Host ('apps.img {0:N0} bytes, {1:N0} free before the settings page' -f $img, (0xD8000 - $img))
 foreach ($f in 'loader.uf2', 'xous.uf2', 'apps.uf2') { $i = Get-Item (Join-Path $rel $f); '{0,-11} {1,8:N0} KiB  {2}' -f $f, ($i.Length / 1KB), $i.LastWriteTime }

@@ -60,3 +60,16 @@ index 8ab0fa8..e9e7930 100644
          #[cfg(feature = "mpw")]
          while self.csr.rf(utra::udma_i2c_0::REG_STATUS_R_BUSY) == 0 {}
          self.pending = I2cPending::Read(len);
+diff --git a/services/bao1x-hal-service/src/servers/i2c.rs b/services/bao1x-hal-service/src/servers/i2c.rs
+index 3191ed7..1bed869 100644
+--- a/services/bao1x-hal-service/src/servers/i2c.rs
++++ b/services/bao1x-hal-service/src/servers/i2c.rs
+@@ -43,7 +43,7 @@ fn i2c_service() -> ! {
+     let mut i2c = unsafe {
+         bao1x_hal::udma::I2cDriver::new_with_ifram(
+             i2c_channel,
+-            400_000,
++            1_000_000, // ChocoBao: the OLED takes this fine and frames go out 2.5x faster than at 400 kHz
+             bao1x_api::PERCLK,
+             i2c_ifram,
+             &udma_global,

@@ -319,6 +319,9 @@ impl Panel {
         self.cmds(INIT) && self.cmds(&[0xAF])
     }
 
+    /// Switch the panel off (it keeps its picture in memory but shows nothing and uses almost no power).
+    pub fn display_off(&mut self) -> bool { self.cmds(&[0xAE]) }
+
     /// Make the next `push` resend everything.
     pub fn invalidate(&mut self) { self.sent_valid = false; }
 

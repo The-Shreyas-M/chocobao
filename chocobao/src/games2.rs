@@ -66,7 +66,7 @@ pub const HELP: [[&str; 4]; 16] = [
     ["^v<> walk", "find the exit", "at the far corner", "3 levels, bigger each"],
     ["OK drops the block", "land it on the tower", "overhang is cut off", "perfect = bonus"],
     ["<> pile  ^v lift more", "OK lift / OK drop", "HOLD OK: send to top", "down red/black, A-K"],
-    ["hold OK = fly up", "dodge zaps, missiles", "S shield M magnet", "B bike C crush G grav"],
+    ["hold OK = fly, 3 lives", "dodge zaps, missiles", "S shield M magnet", "B bike C crush G grav"],
     ["<> steer, DOWN brake", "OK / UP = nitro boost", "grab cans for nitro", "cars cost a life"],
     ["<> change lane", "UP jump, DOWN slide", "jump low barriers", "slide under beams"],
 ];
@@ -2676,11 +2676,11 @@ impl Game for Solitaire {
 const JP_TOP: i32 = 11;
 const JP_BOT: i32 = 62;
 
-/// 8 x 10 pixel hero: flying, and two running frames. Bit 7 is the leftmost pixel.
-const HERO: [[u8; 10]; 3] = [
-    [0b00011100, 0b00111110, 0b00110100, 0b00011100, 0b11111100, 0b11111100, 0b11111100, 0b00111000, 0b00110100, 0b00100100],
-    [0b00011100, 0b00111110, 0b00110100, 0b00011100, 0b11111100, 0b11111100, 0b11111100, 0b00111000, 0b00101000, 0b01000100],
-    [0b00011100, 0b00111110, 0b00110100, 0b00011100, 0b11111100, 0b11111100, 0b11111100, 0b00111000, 0b00010000, 0b00111000],
+/// 8 x 11 pixel hero (helmet, face, jetpack on his back, arm, legs): flying, and two running frames. Bit 7 is the leftmost pixel.
+const HERO: [[u8; 11]; 3] = [
+    [0b00111000, 0b01111000, 0b01110100, 0b00111000, 0b00010000, 0b11011100, 0b11011110, 0b11011100, 0b01011100, 0b00010100, 0b00110110],
+    [0b00111000, 0b01111000, 0b01110100, 0b00111000, 0b00010000, 0b11011100, 0b11011110, 0b11011100, 0b01011100, 0b00100100, 0b01100011],
+    [0b00111000, 0b01111000, 0b01110100, 0b00111000, 0b00010000, 0b11011100, 0b11011110, 0b11011100, 0b01011100, 0b00011000, 0b00011000],
 ];
 /// 5 x 8 scientist in a white coat (two walking frames).
 const SCI: [[u8; 8]; 2] = [
@@ -2743,6 +2743,7 @@ pub struct Jetpack {
     grav_up: bool,
     inv: f32,
     sci: u32,
+    lives: i32,
     gap: f32,
     alive: bool,
     paused: bool,
@@ -2769,6 +2770,7 @@ impl Jetpack {
             grav_up: false,
             inv: 0.0,
             sci: 0,
+            lives: 3,
             gap: 40.0,
             alive: true,
             paused: false,
@@ -2783,7 +2785,7 @@ impl Jetpack {
         match self.veh {
             1 => (14, 12),
             2 => (14, 15),
-            _ => (6, 10),
+            _ => (6, 11),
         }
     }
     fn on_floor_mode(&self) -> bool { self.veh == 1 || self.veh == 2 }
@@ -3022,7 +3024,14 @@ impl Game for Jetpack {
                             self.snd = Some(Snd::Crash);
                             remove = true;
                         } else {
-                            dead = true;
+                            // a hit costs one of your three lives; you blink and fly through for 2 seconds
+                            self.lives -= 1;
+                            self.inv = 2.0;
+                            self.snd = Some(Snd::Crash);
+                            remove = true;
+                            if self.lives <= 0 {
+                                dead = true;
+                            }
                         }
                     }
                     _ => {}
@@ -3056,7 +3065,10 @@ impl Game for Jetpack {
         } else {
             ""
         };
-        txt(c, 80, 0, label);
+        txt(c, 58, 0, label);
+        for l in 0..self.lives.max(0) {
+            fr(c, 120 - l * 7, 1, 5, 5, true);
+        }
         fr(c, 0, JP_TOP - 1, 128, 1, true);
         fr(c, 0, JP_BOT + 1, 128, 1, true);
         // lab windows and far dots slide by: you can feel the speed
@@ -3164,8 +3176,8 @@ impl Game for Jetpack {
                     let f = if self.thrust || self.veh == 3 || py < JP_BOT - 10 { 0 } else { 1 + ((self.clock / 110) % 2) as usize };
                     sprite8(c, 19, py, &HERO[f], 8);
                     if self.thrust && self.veh == 0 {
-                        fr(c, 18, py + 7, 2, 2 + (self.clock as i32 / 60) % 3, true);
-                        c.dot(19, py + 11, true);
+                        fr(c, 19, py + 9, 2, 2 + (self.clock as i32 / 60) % 3, true);
+                        c.dot(20, py + 13, true);
                     }
                     if self.veh == 3 {
                         rc(c, 16, py - 2, 14, 14);

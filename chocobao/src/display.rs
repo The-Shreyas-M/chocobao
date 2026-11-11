@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use crate::oled::{Canvas, Frame, Panel, H, W};
 
 const REFRESH_MS: u32 = 8_000; // every 3 s: send the OLED settings again and resend the whole picture (heals a power glitch)
-const MIN_GAP_MS: u32 = 20; // at most about 40 pushes per second
+const MIN_GAP_MS: u32 = 5; // at most about 40 pushes per second
 const REINIT_AFTER_FAILS: u32 = 3;
 
 struct Shared {
@@ -140,7 +140,7 @@ fn thread_main(sh: Arc<Shared>, ready: std::sync::mpsc::Sender<bool>) {
                 crate::diag::max(&crate::diag::PUSH_MAX_MS, took);
                 crate::diag::DISP_BUSY_MS.fetch_add(took, Ordering::Relaxed);
                 last_push = now_ms(&sh);
-                gap_ms = MIN_GAP_MS.max(took * 6 / 5); // at most about 45% of the time on the bus
+                gap_ms = MIN_GAP_MS; // the picture itself goes out by DMA; frame pacing in the app keeps the load sane
                 if took > sh.max_ms.load(Ordering::Relaxed) {
                     sh.max_ms.store(took, Ordering::Relaxed);
                 }

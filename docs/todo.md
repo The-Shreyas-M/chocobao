@@ -1,5 +1,8 @@
 # TODO
 
+## SAVING SETTINGS TO RERAM (v3.0.0): proving it on the board
+`chocobao/src/store.rs` keeps settings in the last app page (0x3D9000). The first try crashed the whole app at boot, so it is OFF by default and runs in steps only when a button is held while the board starts: UP = claim the ReRAM controller, RIGHT = also map the page, LEFT = also read it. Find which step crashes (press RESET alone to recover), then fix that step; `PERSIST_WRITES` in app.rs turns on the actual writing.
+
 ## STATUS 11 Nov 2026 (firmware v2.9.0, flashed) - read this first
 Built and flashed: 27 games (Doom 5 levels first, Jetpack Joyride, Road Rush, Subway Run, Ninja Run, Star Drifter, Space Invaders, Tetris, Pac-Man...), Music > Tracks (5 songs from MIDI) and Tools (metronome), Notary + verify.py, TRNG health, button scope, CPU stats, record-player screen, 3 savers. OLED bus 1 MHz, frame pacing, self-healing screen, BIO notes queued ahead.
 Dropped by the owner: hardware wallet (no room next to the games), isolated-Notary process, glitch/tamper sensors, AM radio.

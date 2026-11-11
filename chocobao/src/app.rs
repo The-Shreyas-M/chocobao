@@ -107,7 +107,7 @@ static UTIL_ITEMS: [Item; 17] = [
     it("Text presets", &I_WORDS, "Hold OK types a text"),
     it("Flashlight", &I_INFO, "White screen, strobe"),
 ];
-static GAME_ITEMS: [Item; 24] = [
+static GAME_ITEMS: [Item; 25] = [
     it("Mempool Dodger", &I_DODGER, "Dodge blocks, grab coins"),
     it("Snake", &I_SNAKE, "Eat, grow, don't crash"),
     it("Pong", &I_PONG, "You vs the computer"),
@@ -132,6 +132,7 @@ static GAME_ITEMS: [Item; 24] = [
     it(crate::games2::NAMES[12], &crate::games2::ICONS[12], crate::games2::DESCS[12]),
     it(crate::games2::NAMES[13], &crate::games2::ICONS[13], crate::games2::DESCS[13]),
     it(crate::games2::NAMES[14], &crate::games2::ICONS[14], crate::games2::DESCS[14]),
+    it(crate::games2::NAMES[15], &crate::games2::ICONS[15], crate::games2::DESCS[15]),
 ];
 static MUSIC_ITEMS: [Item; 6] = [
     it("Closer", &I_SPEAKER, "The Chainsmokers"),
@@ -195,9 +196,9 @@ const H_SEED: usize = 17;
 const H_MANDEL: usize = 18;
 const H_CLOCK: usize = 19;
 const H_PLAYER: usize = 21;
-const H_GAME2: usize = 22; // 15 more games: 22..=36
-const H_TOOL0: usize = 37; // 13 tools: 37..=49
-const HELP_COUNT: usize = 50;
+const H_GAME2: usize = 22; // 16 more games: 22..=37
+const H_TOOL0: usize = 38; // 13 tools: 38..=50
+const HELP_COUNT: usize = 51;
 
 fn help_text(id: usize) -> (&'static str, [&'static str; 4]) {
     match id {
@@ -406,7 +407,7 @@ struct App {
     help_seen: [bool; HELP_COUNT],
     started: Instant,
     down: [bool; 6],
-    best: [u32; 24],
+    best: [u32; 32],
     sound_done: bool,
     anim_at: Instant,
     rep_at: Instant,
@@ -471,7 +472,7 @@ fn run(rx: Receiver<Input>) {
         help_seen: [false; HELP_COUNT],
         started: Instant::now(),
         down: held,
-        best: [0; 24],
+        best: [0; 32],
         sound_done: false,
         anim_at: Instant::now(),
         rep_at: Instant::now(),
@@ -521,7 +522,10 @@ fn run(rx: Receiver<Input>) {
         if catch_unwind(AssertUnwindSafe(|| app.tick())).is_err() {
             app.recover();
         }
-        if app.dirty {
+        // frame pacing: draw a new picture only when the display thread has taken the previous one, so we never
+        // spend CPU on frames that would be thrown away (this keeps the system smooth under load)
+        let display_ready = app.display.as_ref().map(|d| d.ready()).unwrap_or(true);
+        if app.dirty && display_ready {
             app.dirty = false;
             if catch_unwind(AssertUnwindSafe(|| app.draw())).is_err() {
                 app.recover();
@@ -1115,7 +1119,7 @@ impl App {
             (MenuId::Lab, 2) => self.open_tool(crate::tools2::Kind::Scope),
             (MenuId::Lab, 3) => self.open_tool(crate::tools2::Kind::Health),
             (MenuId::Lab, 4) => self.open_tool(crate::tools2::Kind::Notary),
-            (MenuId::Games, i) if i >= 9 && i < 24 => self.open_game2(i - 9),
+            (MenuId::Games, i) if i >= 9 && i < 25 => self.open_game2(i - 9),
             (MenuId::Music, 0..=4) => {
                 self.snd.silence();
                 self.song_ended = false;

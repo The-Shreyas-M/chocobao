@@ -5,7 +5,7 @@
 // 0.87 MB) and the engine wants several MB of RAM; the chip has 2 MiB shared with the OS. This engine keeps the
 // idea (first-person view, enemies that chase you, shooting) in a few KiB. It uses f32, which is software
 // emulated on this CPU but still cheap at 64 rays per frame.
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Instant;
 
 use bao1x_hal_service::trng::Trng;
@@ -158,6 +158,7 @@ const SPOTS: [&[(f32, f32)]; 4] = [
 ];
 
 static LEVEL: AtomicUsize = AtomicUsize::new(0);
+static TUTORIAL_SEEN: AtomicBool = AtomicBool::new(false); // the how-to is shown once, before level 1
 
 fn map() -> &'static [&'static str] {
     match LEVEL.load(Ordering::Relaxed) {
@@ -211,6 +212,7 @@ pub struct Doom {
     alive: bool,
     won: bool,
     paused: bool,
+    started: bool, // false while the how-to is on screen: nothing moves until OK
     last: Instant,
     snd: Option<Snd>,
 }
@@ -270,6 +272,7 @@ impl Doom {
             alive: true,
             won: false,
             paused: false,
+            started: level != 0 || TUTORIAL_SEEN.load(Ordering::Relaxed),
             last: Instant::now(),
             snd: None,
         }
@@ -374,6 +377,14 @@ impl Game for Doom {
         }
     }
     fn press(&mut self, b: Btn, _t: &Trng) -> bool {
+        if !self.started {
+            if b == Btn::Ok {
+                self.started = true;
+                TUTORIAL_SEEN.store(true, Ordering::Relaxed);
+                self.last = Instant::now();
+            }
+            return true;
+        }
         if self.paused {
             if b == Btn::Ok {
                 self.paused = false;
@@ -395,7 +406,7 @@ impl Game for Doom {
     }
 
     fn update(&mut self, t: &Trng) -> bool {
-        if !self.alive || self.paused {
+        if !self.alive || self.paused || !self.started {
             return false;
         }
         // time based, so the speed does not depend on how often this is called (smooth and responsive)
@@ -644,14 +655,6 @@ impl Game for Doom {
             }
             c.line(pxm, pym, pxm + (self.a.cos() * 5.0) as i32, pym + (self.a.sin() * 5.0) as i32);
         }
-        // ---- first seconds: how to play
-        if self.born.elapsed().as_millis() < 3500 && self.alive {
-            c.fill_rect(8, 14, 94, 40, false);
-            c.rect(8, 14, 94, 40);
-            c.text(12, 17, "UP/DOWN  walk");
-            c.text(12, 28, "LEFT/RIGHT turn");
-            c.text(12, 39, "OK shoot (hold)");
-        }
         // ---- crosshair and pistol (it bobs while you walk)
         c.dot(64, mid, true);
         c.dot(62, mid, true);
@@ -708,6 +711,15 @@ impl Game for Doom {
             }
         }
         c.text(78, 54, &format!("E1M{} {}/{}", self.level + 1, self.kills, self.enemies.len()));
+        if !self.started {
+            c.fill_rect(4, 2, 120, 50, false);
+            c.rect(4, 2, 120, 50);
+            c.text(10, 5, "UP/DOWN   walk");
+            c.text(10, 16, "LEFT/RIGHT turn");
+            c.text(10, 27, "OK shoot, kill all");
+            c.text(10, 38, "OK = START");
+            c.invert_rect(8, 39, 112, 11);
+        }
         if !self.alive {
             c.fill_rect(6, 16, 116, 42, false);
             c.rect(6, 16, 116, 42);

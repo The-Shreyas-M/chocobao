@@ -14,12 +14,13 @@ use std::time::{Duration, Instant};
 use crate::oled::{Canvas, Frame, Panel, H, W};
 
 const REFRESH_MS: u32 = 8_000; // every 3 s: send the OLED settings again and resend the whole picture (heals a power glitch)
-const MIN_GAP_MS: u32 = 33; // at most about 40 pushes per second
+const MIN_GAP_MS: u32 = 20; // at most about 40 pushes per second
 const REINIT_AFTER_FAILS: u32 = 3;
 
 struct Shared {
     frame: Mutex<Frame>,
     seq: AtomicU32,
+    taken: AtomicU32, // the `seq` of the picture the display thread last copied
     busy_since: AtomicU32, // 0 = idle, otherwise ms since `t0` (+1)
     present: AtomicBool,
     pushes: AtomicU32,
@@ -39,6 +40,7 @@ impl Display {
         let sh = Arc::new(Shared {
             frame: Mutex::new([0; W * H / 8]),
             seq: AtomicU32::new(0),
+            taken: AtomicU32::new(0),
             busy_since: AtomicU32::new(0),
             present: AtomicBool::new(false),
             pushes: AtomicU32::new(0),
@@ -58,10 +60,16 @@ impl Display {
     /// Publish a new picture. Never blocks on the display.
     pub fn submit(&self, c: &Canvas) {
         if let Ok(mut f) = self.sh.frame.lock() {
+            if f[..] == c.fb[..] {
+                return; // nothing changed: no new picture, no I2C traffic
+            }
             f.copy_from_slice(&c.fb);
         }
         self.sh.seq.fetch_add(1, Ordering::SeqCst);
     }
+
+    /// True when the display thread has picked up the last picture, so drawing the next one is useful.
+    pub fn ready(&self) -> bool { self.sh.taken.load(Ordering::SeqCst) == self.sh.seq.load(Ordering::SeqCst) }
 
     /// How long the current display transfer has been running (0 when idle).
     pub fn stuck_ms(&self) -> u32 {
@@ -106,6 +114,7 @@ fn thread_main(sh: Arc<Shared>, ready: std::sync::mpsc::Sender<bool>) {
     let mut shown = u32::MAX;
     let mut last_full = now_ms(&sh);
     let mut last_push = 0u32;
+    let mut gap_ms = MIN_GAP_MS; // grows with the time a push takes, so the I2C bus never hogs the CPU
     let mut consecutive_fails = 0u32;
     let mut local: Frame = [0; W * H / 8];
     loop {
@@ -113,10 +122,11 @@ fn thread_main(sh: Arc<Shared>, ready: std::sync::mpsc::Sender<bool>) {
             let now = now_ms(&sh);
             let seq = sh.seq.load(Ordering::SeqCst);
             let due = now.saturating_sub(last_full) >= REFRESH_MS;
-            if (seq != shown || due) && now.saturating_sub(last_push) >= MIN_GAP_MS {
+            if (seq != shown || due) && now.saturating_sub(last_push) >= gap_ms {
                 if let Ok(f) = sh.frame.lock() {
                     local.copy_from_slice(&*f);
                 }
+                sh.taken.store(seq, Ordering::SeqCst);
                 sh.busy_since.store(now + 1, Ordering::SeqCst);
                 let mut ok = true;
                 if due {
@@ -130,6 +140,7 @@ fn thread_main(sh: Arc<Shared>, ready: std::sync::mpsc::Sender<bool>) {
                 crate::diag::max(&crate::diag::PUSH_MAX_MS, took);
                 crate::diag::DISP_BUSY_MS.fetch_add(took, Ordering::Relaxed);
                 last_push = now_ms(&sh);
+                gap_ms = MIN_GAP_MS.max(took * 6 / 5); // at most about 45% of the time on the bus
                 if took > sh.max_ms.load(Ordering::Relaxed) {
                     sh.max_ms.store(took, Ordering::Relaxed);
                 }
@@ -156,6 +167,6 @@ fn thread_main(sh: Arc<Shared>, ready: std::sync::mpsc::Sender<bool>) {
             log::error!("display thread panic caught");
             sh.busy_since.store(0, Ordering::SeqCst);
         }
-        tt.sleep_ms(8).ok();
+        tt.sleep_ms(4).ok();
     }
 }

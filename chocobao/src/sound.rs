@@ -15,6 +15,7 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use arbitrary_int::{Number, u5};
 use bao1x_api::bio::*;
@@ -259,10 +260,15 @@ impl Tone {
     fn start(&mut self, hz: u32, ms: u32) {
         let hz = if hz < 4000 { hz * 2 } else { hz }; // everything an octave higher: the buzzer is much louder there
         let half = (TICK_HZ / (2 * hz.clamp(50, 250_000))).max(1);
-        let periods = (hz as u64 * ms as u64 / 1000).max(1) as u32;
+        let actual = TICK_HZ / (2 * half); // the frequency the core really makes (whole ticks), so lengths are exact
+        let periods = (actual as u64 * ms as u64 / 1000).max(1) as u32;
         self.tx.csr.wo(bio_bdma::SFR_TXF1, half);
         self.tx.csr.wo(bio_bdma::SFR_TXF1, periods);
     }
+
+    /// A silence of `ms`: the core plays 45 kHz, which a buzzer cannot reproduce. This lets us queue rests and gaps
+    /// into the core like notes, so the timing no longer depends on when this thread wakes up.
+    fn silence(&mut self, ms: u32) { self.start(45_000, ms.max(1)); }
 }
 
 fn run(rx: Receiver<Msg>, enabled: Arc<AtomicBool>, status: Arc<Mutex<String>>) {
@@ -287,10 +293,19 @@ fn run(rx: Receiver<Msg>, enabled: Arc<AtomicBool>, status: Arc<Mutex<String>>) 
     let mut tune: Option<&'static [Note]> = None;
     let mut idx = 0usize;
     let mut pending: Option<Note> = None;
+    // The BIO core plays what we queue by itself, back to back. We keep up to three (frequency, length) pairs queued
+    // ahead of the clock, so even if this thread is delayed by other work (drawing, USB) the music does not stutter.
+    let mut ends: VecDeque<Instant> = VecDeque::new(); // when each queued pair finishes
+    let mut busy_until = Instant::now();
     loop {
-        // collect messages without blocking; block only when there is nothing to play
+        // collect messages without blocking; block only when there is nothing to play at all
         loop {
-            let m = if effects.is_empty() && tune.is_none() {
+            let now = Instant::now();
+            while ends.front().map_or(false, |e| *e <= now) {
+                ends.pop_front();
+            }
+            let idle = effects.is_empty() && tune.is_none() && pending.is_none() && busy_until <= now;
+            let m = if idle {
                 match rx.recv() {
                     Ok(m) => m,
                     Err(_) => return,
@@ -313,51 +328,78 @@ fn run(rx: Receiver<Msg>, enabled: Arc<AtomicBool>, status: Arc<Mutex<String>>) 
             }
         }
         let on = enabled.load(Ordering::Relaxed);
-        let mut from_tune = false;
-        let mut note: Option<Note> = None;
-        if let Some(n) = effects.pop_front() {
-            note = Some(n);
-        } else if on {
-            if let Some(p) = pending.take() {
-                // the rest of a long song note (effects that arrived meanwhile were played first)
-                if tune.is_some() {
-                    note = Some(p);
+        // top up the core's queue
+        loop {
+            let now = Instant::now();
+            while ends.front().map_or(false, |e| *e <= now) {
+                ends.pop_front();
+            }
+            if ends.len() >= 2 {
+                break; // one playing and one waiting is enough; never overfill the FIFO
+            }
+            let mut from_tune = false;
+            let mut note: Option<Note> = None;
+            if let Some(n) = effects.pop_front() {
+                note = Some(n);
+            } else if on {
+                if let Some(p) = pending.take() {
+                    if tune.is_some() {
+                        note = Some(p);
+                        from_tune = true;
+                    }
+                } else if let Some(t) = tune {
+                    if ONCE.load(Ordering::Relaxed) && idx >= t.len() {
+                        tune = None; // the song is over
+                        ACTIVE.store(false, Ordering::Relaxed);
+                        CUR_HZ.store(0, Ordering::Relaxed);
+                        break;
+                    }
+                    let n = t[idx % t.len()];
+                    POS.store(idx % t.len(), Ordering::Relaxed);
+                    CUR_HZ.store(n.0 & !TIE, Ordering::Relaxed);
+                    idx += 1;
+                    note = Some(n);
                     from_tune = true;
                 }
-            } else if let Some(t) = tune {
-                if ONCE.load(Ordering::Relaxed) && idx >= t.len() {
-                    tune = None; // the song is over
-                    ACTIVE.store(false, Ordering::Relaxed);
-                    CUR_HZ.store(0, Ordering::Relaxed);
-                    continue;
-                }
-                let n = t[idx % t.len()];
-                POS.store(idx % t.len(), Ordering::Relaxed);
-                CUR_HZ.store(n.0 & !TIE, Ordering::Relaxed);
-                idx += 1;
-                note = Some(n);
-                from_tune = true;
             }
-        }
-        if let Some((raw, ms)) = note {
+            let Some((raw, ms)) = note else { break };
             let hz = raw & !TIE;
             let mut ms = ms;
             let mut tied = raw & TIE != 0; // a piece of a long note tied to the next: no gap
-            // song notes are played in short slices, so a click or effect never waits more than ~40 ms
+            // song notes go out in short slices, so a click or effect never waits long behind them
             if from_tune && ms > SLICE_MS + 15 {
                 pending = Some((raw, ms - SLICE_MS));
                 ms = SLICE_MS;
                 tied = true;
             }
+            let gap = if tied { 0 } else { 10 }; // a short silence so repeated notes stay distinct
+            let start = if busy_until > now { busy_until } else { now };
             if hz != REST && on {
                 if let Some(t) = tone.as_mut() {
                     t.start(hz, ms);
+                    if gap > 0 {
+                        t.silence(gap);
+                    }
                     crate::diag::SND_BUSY_MS.fetch_add(ms, Ordering::Relaxed);
                 }
+            } else if let Some(t) = tone.as_mut() {
+                if on {
+                    t.silence(ms + gap);
+                }
             }
-            tt.sleep_ms(ms as usize + if tied { 0 } else { 10 }).ok(); // 10 ms gap so repeated notes are distinct
-        } else if tune.is_some() && !on {
+            ends.push_back(start + Duration::from_millis(ms as u64));
+            if gap > 0 {
+                ends.push_back(start + Duration::from_millis((ms + gap) as u64));
+            }
+            busy_until = start + Duration::from_millis((ms + gap) as u64);
+        }
+        // wake up again when there is room for the next note (or in 15 ms to look for messages)
+        let now = Instant::now();
+        let wait = ends.front().map_or(15, |e| e.saturating_duration_since(now).as_millis() as u64).clamp(3, 15);
+        if tune.is_some() && !on {
             tt.sleep_ms(100).ok();
+        } else if !ends.is_empty() || !effects.is_empty() || pending.is_some() || tune.is_some() {
+            tt.sleep_ms(wait as usize).ok();
         }
     }
 }

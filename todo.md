@@ -1,5 +1,16 @@
 # TODO
 
+## STATUS 11 Nov 2026 (firmware v2.9.0, flashed) - read this first
+Built and flashed: 27 games (Doom 5 levels first, Jetpack Joyride, Road Rush, Subway Run, Ninja Run, Star Drifter, Space Invaders, Tetris, Pac-Man...), Music > Tracks (5 songs from MIDI) and Tools (metronome), Notary + verify.py, TRNG health, button scope, CPU stats, record-player screen, 3 savers. OLED bus 1 MHz, frame pacing, self-healing screen, BIO notes queued ahead.
+Dropped by the owner: hardware wallet (no room next to the games), isolated-Notary process, glitch/tamper sensors, AM radio.
+Open items:
+- [ ] Owner decisions: licence (suggest Apache-2.0); MMU demo (kill a misbehaving game thread) yes/no; should Seed words be typed instead of shown; which GitHub account to publish from.
+- [ ] Deliverables (nothing written yet): README with reproduction steps, protocol spec for Notary, 2-minute video (owner records), write-up that states the limits. No new features after 12 Dec; deadline 15 Dec 21:00 ET.
+- [ ] Flash space: apps.img is about 793 KB of 870 KB. Anything big needs compression or removal.
+- [ ] BUILD_GUIDE / README still mention older menus in places.
+- [ ] Unverified on the real board: Ninja Run, Star Drifter, Road Rush, Subway Run, Jetpack vehicles, AURA playback after the queue-ahead sound rewrite.
+
+
 Status key: [ ] open, [~] in progress, [x] done. Rewritten 10 Nov 2026 (firmware v1.1). Older items are kept at the bottom.
 
 ## Findings so far (read first)

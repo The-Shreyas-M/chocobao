@@ -153,6 +153,7 @@ fn run(tx: Sender<Input>) {
     led.request(3); // "app started"
     let mut st = [BtnState { low: 0, high: 0, pressed: false, since: Instant::now() }; 6];
     let mut next = Instant::now();
+    let mut last_active = Instant::now();
     loop {
         // two bank reads per poll instead of six pin reads
         let (pb, pc) = (iox.get_gpio_bank_value(IoxPort::PB), iox.get_gpio_bank_value(IoxPort::PC));
@@ -185,7 +186,12 @@ fn run(tx: Sender<Input>) {
         let any_down = st.iter().any(|b| b.pressed);
         led.tick(&iox, any_down);
         // fixed-rate schedule: sleep until the next 5 ms slot instead of "5 ms after we finished"
-        next += Duration::from_millis(POLL_MS as u64);
+        // while nothing is pressed (and for a moment after) poll every 8 ms; the CPU has less to do for the games
+        if any_down {
+            last_active = Instant::now();
+        }
+        let step = if last_active.elapsed() < Duration::from_millis(1500) { POLL_MS } else { POLL_MS * 2 };
+        next += Duration::from_millis(step as u64);
         let now = Instant::now();
         if next > now {
             tt.sleep_ms(((next - now).as_millis() as usize).max(1)).ok();

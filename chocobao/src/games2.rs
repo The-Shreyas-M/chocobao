@@ -70,7 +70,7 @@ pub const HELP: [[&str; 4]; 18] = [
     ["^v<> walk", "find the exit", "at the far corner", "3 levels, bigger each"],
     ["OK drops the block", "land it on the tower", "overhang is cut off", "perfect = bonus"],
     ["<> pile  ^v lift more", "OK lift / OK drop", "HOLD OK: send to top", "down red/black, A-K"],
-    ["OK/UP = fly, 3 lives", "<> or v = shoot gun", "S M 2 B C G boxes", "shoot missiles, men"],
+    ["UP = fly, OK = shoot", "3 lives, shoot men", "S M 2 B C G boxes", "G: UP up, DOWN down"],
     ["<> steer, DOWN brake", "OK / UP = nitro boost", "grab cans for nitro", "cars cost a life"],
     ["<> change lane", "UP jump, DOWN slide", "jump low barriers", "slide under beams"],
     ["< > run  UP jump (x2)", "OK throw shuriken", "stomp or hit samurai", "dodge spikes, saws"],
@@ -2896,17 +2896,21 @@ impl Game for Jetpack {
             }
             return true;
         }
-        if self.veh == 3 && (b == Btn::Ok || b == Btn::Up) {
-            self.grav_up = !self.grav_up; // gravity suit: every press flips gravity
-            self.vy = 0.0;
-            self.snd = Some(Snd::Tick);
+        if self.veh == 3 && (b == Btn::Up || b == Btn::Down) {
+            // gravity suit: UP sticks you to the ceiling, DOWN to the floor
+            let up = b == Btn::Up;
+            if up != self.grav_up {
+                self.grav_up = up;
+                self.vy = 0.0;
+                self.snd = Some(Snd::Tick);
+            }
             return true;
         }
         false
     }
     fn held(&mut self, down: &[bool; 6]) {
-        self.thrust = down[0] || down[1];
-        self.shooting = down[2] || down[3] || down[4]; // DOWN, LEFT or RIGHT fires the gun
+        self.thrust = down[1]; // UP flies (and hops the bike / crusher)
+        self.shooting = down[0]; // OK fires the gun, nothing else does
     }
     fn update(&mut self, t: &Trng) -> bool {
         if !self.alive || self.paused {

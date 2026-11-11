@@ -221,6 +221,33 @@ impl Doom {
     }
 }
 
+/// 16x16 human-like figure (head with two eyes, shoulders, arms, torso, legs). 1 = lit pixel.
+const FIGURE: [u16; 16] = [
+    0b0000011111100000,
+    0b0000111111110000,
+    0b0000110110110000,
+    0b0000111111110000,
+    0b0000011111100000,
+    0b0000001111000000,
+    0b0011111111111100,
+    0b0111111111111110,
+    0b0111011111101110,
+    0b0110011111100110,
+    0b0110011111100110,
+    0b0110001111000110,
+    0b0000001111000000,
+    0b0000011001100000,
+    0b0000011001100000,
+    0b0000111001110000,
+];
+
+fn sprite(u: i32, v: i32) -> bool {
+    if !(0..16).contains(&u) || !(0..16).contains(&v) {
+        return false;
+    }
+    FIGURE[v as usize] & (0x8000 >> u) != 0
+}
+
 fn shade(level: u8, x: i32, y: i32) -> bool {
     match level {
         0 => true,
@@ -433,40 +460,52 @@ impl Game for Doom {
             let w = (h * 6 / 10).max(2);
             let top = (mid - h / 2).max(VIEW_TOP);
             let bot = (mid + h / 2).min(63);
-            for xx in (sx - w / 2)..(sx + w / 2) {
+            let left = sx - w / 2;
+            for xx in left..(sx + w / 2) {
                 let col = (xx / 2) as usize;
                 if xx < 0 || xx >= 128 || col >= NCOL || ty >= zbuf[col] {
                     continue;
                 }
+                let u = (xx - left) * 16 / w.max(1);
                 for y in top..=bot {
-                    let eye = y > top + h / 6 && y < top + h / 3 && ((xx - sx).abs() > w / 6) && ((xx - sx).abs() < w / 3);
-                    c.dot(xx, y, !eye && ((xx + y) & 1 == 0 || y == top || y == bot || xx == sx - w / 2));
-                    if !eye && (xx + y) & 1 == 1 && y > top + h / 2 {
+                    let v = (y - (mid - h / 2)) * 16 / h.max(1);
+                    if sprite(u, v) {
                         c.dot(xx, y, true);
+                    } else if sprite(u - 1, v) || sprite(u + 1, v) || sprite(u, v - 1) || sprite(u, v + 1) {
+                        c.dot(xx, y, false); // dark outline so the figure stands out from the wall behind it
                     }
                 }
             }
         }
-        // ---- minimap (top right): walls, enemies and you
+        // ---- minimap (top right, 2 pixels per cell): walls, blinking enemies, you = big blinking dot with a pointer
         {
-            let (mx0, my0) = (110usize, 11usize);
-            c.fill_rect(mx0 - 1, my0 - 1, 18, 18, false);
-            c.rect(mx0 - 1, my0 - 1, 18, 18);
+            let (mx0, my0) = (95i32, 12i32);
+            c.fill_rect((mx0 - 1) as usize, (my0 - 1) as usize, 34, 34, false);
+            c.rect((mx0 - 1) as usize, (my0 - 1) as usize, 34, 34);
             for (yy, row) in map().iter().enumerate() {
                 for (xx, ch) in row.bytes().enumerate() {
                     if ch == b'#' {
-                        c.dot((mx0 + xx) as i32, (my0 + yy) as i32, true);
+                        c.fill_rect((mx0 + xx as i32 * 2) as usize, (my0 + yy as i32 * 2) as usize, 2, 2, true);
                     }
                 }
             }
+            let blink = (self.born.elapsed().as_millis() / 250) % 2 == 0;
             for e in self.enemies.iter().filter(|e| e.hp > 0) {
-                if (self.born.elapsed().as_millis() / 250) % 2 == 0 {
-                    c.dot(mx0 as i32 + e.x as i32, my0 as i32 + e.y as i32, true);
+                if blink {
+                    let (ex, ey) = (mx0 + (e.x * 2.0) as i32, my0 + (e.y * 2.0) as i32);
+                    c.dot(ex, ey, true);
+                    c.dot(ex + 1, ey, false);
                 }
             }
-            let (pxm, pym) = (mx0 as i32 + self.px as i32, my0 as i32 + self.py as i32);
-            c.dot(pxm, pym, false);
-            c.dot(pxm + (self.a.cos() * 2.0) as i32, pym + (self.a.sin() * 2.0) as i32, true);
+            // you: a 3x3 dark square with a bright centre and a line showing where you look (always visible)
+            let (pxm, pym) = (mx0 + (self.px * 2.0) as i32, my0 + (self.py * 2.0) as i32);
+            c.fill_rect((pxm - 2).max(0) as usize, (pym - 2).max(0) as usize, 5, 5, false);
+            if (self.born.elapsed().as_millis() / 150) % 2 == 0 {
+                c.fill_rect((pxm - 1).max(0) as usize, (pym - 1).max(0) as usize, 3, 3, true);
+            } else {
+                c.dot(pxm, pym, true);
+            }
+            c.line(pxm, pym, pxm + (self.a.cos() * 5.0) as i32, pym + (self.a.sin() * 5.0) as i32);
         }
         // ---- first seconds: how to play
         if self.born.elapsed().as_millis() < 3500 && self.alive {

@@ -91,6 +91,7 @@ def main():
     ap.add_argument('--bars', help='first-last bar, e.g. 1-16 (assumes 4/4)')
     ap.add_argument('--speed', type=float, default=1.0, help='tempo multiplier, 1.35 = 35%% faster')
     ap.add_argument('--max-ms', type=int, default=300, help='split longer notes (the player cuts in between notes)')
+    ap.add_argument('--min-pitch', type=int, default=0, help='ignore MIDI notes below this (60 = middle C); use it to drop chords and bass')
     ap.add_argument('--min-hz', type=float, default=400)
     ap.add_argument('--max-hz', type=float, default=2600)
     a = ap.parse_args()
@@ -101,7 +102,7 @@ def main():
                 print(f'track {k}: {len(tr)} notes, pitches {min(n for _, _, n in tr)}-{max(n for _, _, n in tr)}', file=sys.stderr)
         print('choose one with --track N (the melody is usually the track with the higher pitches)', file=sys.stderr)
         return
-    notes = tracks[a.track]
+    notes = [n for n in tracks[a.track] if n[2] >= a.min_pitch]
     if a.bars:
         lo, hi = (int(x) for x in a.bars.split('-'))
         notes = [n for n in notes if (lo - 1) * 4 * div <= n[0] < hi * 4 * div]
@@ -121,6 +122,7 @@ def main():
     # a note ends when the next one starts (sustained / pedalled notes would otherwise overlap and stretch the tune)
     mono = [(s, min(e, mono[k + 1][0]) if k + 1 < len(mono) and mono[k + 1][0] > s else e, n) for k, (s, e, n) in enumerate(mono)]
     out, prev_end = [], None
+    t_first = ticks_to_ms(mono[0][0], div, tempo_map) / a.speed if mono else 0
     for s, e, n in mono:
         n += a.transpose
         hz = 440.0 * 2 ** ((n - 69) / 12)

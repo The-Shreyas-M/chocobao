@@ -406,6 +406,7 @@ struct App {
     saver: Option<Instant>,
     saver_kind: usize,
     saver_track: usize,
+    song_ended: bool, // the song in the player finished: offer play again / next
     quit_ask: bool, // Button test / Button scope: BACK is a tested button, so quitting needs a second BACK
     idle_s: u64,
     invert: bool,
@@ -466,6 +467,7 @@ fn run(rx: Receiver<Input>) {
         saver_kind: 0,
         saver_track: 0,
         quit_ask: false,
+        song_ended: false,
         idle_s: 45,
         invert: false,
         clock: (12 * 3600, Instant::now()),
@@ -689,6 +691,17 @@ impl App {
             let to = parent(&self.screen);
             self.goto(to);
             return;
+        }
+        if let Screen::Player { idx, playing } = &mut self.screen {
+            if matches!(b, Btn::Left | Btn::Right) {
+                let n = crate::music::TUNES.len();
+                *idx = (*idx + if b == Btn::Right { 1 } else { n - 1 }) % n;
+                *playing = true;
+                self.song_ended = false;
+                self.snd.tune_fat(Some(crate::music::TUNES[*idx].notes));
+                self.dirty = true;
+                return;
+            }
         }
         let mut redraw = false;
         let mut click = false;
@@ -985,6 +998,7 @@ impl App {
                         tune = Some(crate::music::TUNES[*idx].notes);
                     }
                 }
+                self.song_ended = false;
                 self.snd.tune_fat(tune);
                 self.dirty = true;
             }
@@ -1077,6 +1091,7 @@ impl App {
             (MenuId::Games, i) if i >= 9 && i < 22 => self.open_game2(i - 9),
             (MenuId::Music, 0) | (MenuId::Music, 1) | (MenuId::Music, 2) => {
                 self.snd.silence();
+                self.song_ended = false;
                 self.open(H_PLAYER, Screen::Player { idx: sel, playing: false })
             }
             (MenuId::Lab, 0) => self.open(H_MANDEL, Screen::Mandel(Box::new(crate::mandel::Mandel::new()))),
@@ -1154,7 +1169,9 @@ impl App {
         }
         if let Screen::Player { playing, .. } = &mut self.screen {
             if *playing && !self.snd.tune_active() {
-                *playing = false; // the song finished
+                *playing = false; // the song finished: stay here and ask, never jump into the screensaver
+                self.song_ended = true;
+                self.last_input = now;
                 self.dirty = true;
             }
         }
@@ -1430,7 +1447,13 @@ impl App {
                     let h = if *playing { 3 + ((ms / 90 + i * 37 + i * i).wrapping_mul(2654435761u32) >> 28) as usize * 2 } else { 2 };
                     oled.fill_rect((i * 8 + 1) as usize, 50 - h.min(24), 6, h.min(24), true);
                 }
-                oled.text(0, 54, if *playing { "OK = stop" } else { "OK = play" });
+                if self.song_ended {
+                    oled.fill_rect(8, 24, 112, 22, false);
+                    oled.rect(8, 24, 112, 22);
+                    oled.text(36, 26, "Song ended");
+                    oled.text(14, 36, "OK again  > next");
+                }
+                oled.text(0, 54, if *playing { "OK stop  <> song" } else { "OK play  <> song" });
             }
             Screen::Mandel(m) => {
                 for y in 0..crate::mandel::H {

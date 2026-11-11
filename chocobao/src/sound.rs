@@ -147,7 +147,7 @@ impl Sound {
 
     /// Like `tune`, but every note is played as a fast two-voice shimmer (note + octave) for a fuller buzzer sound.
     pub fn tune_fat(&self, t: Option<&'static [Note]>) {
-        FAT.store(true, Ordering::Relaxed);
+        FAT.store(false, Ordering::Relaxed); // the two-voice shimmer is switched off: plain notes sound better
         ONCE.store(true, Ordering::Relaxed);
         ACTIVE.store(t.is_some(), Ordering::Relaxed);
         self.tx.send(Msg::Tune(t)).ok();

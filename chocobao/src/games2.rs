@@ -27,7 +27,7 @@ pub const NAMES: [&str; 13] = [
     "Lunar Lander",
     "Maze",
     "Tower Blocks",
-    "Solitaire",
+    "FreeCell",
 ];
 
 pub const DESCS: [&str; 13] = [
@@ -43,7 +43,7 @@ pub const DESCS: [&str; 13] = [
     "Land softly on the pad",
     "Find the exit, 3 levels",
     "Stack the city blocks",
-    "Klondike, draw one",
+    "All cards face up",
 ];
 
 pub const HELP: [[&str; 4]; 13] = [
@@ -59,7 +59,7 @@ pub const HELP: [[&str; 4]; 13] = [
     ["OK = main thrust", "<> side thrusters", "land on the pad", "slow and level"],
     ["^v<> walk", "find the exit", "at the far corner", "3 levels, bigger each"],
     ["OK drops the block", "land it on the tower", "overhang is cut off", "perfect = bonus"],
-    ["<> pile  ^v how many", "OK lift, OK drop", "HOLD OK = foundation", "at stock: OK draws"],
+    ["<> pick a spot  ^v", "OK lift, OK drop", "HOLD OK = foundation", "4 cells hold 1 card"],
 ];
 
 /// 8x8 menu icons, one byte per row, most significant bit = leftmost pixel.
@@ -76,7 +76,7 @@ pub const ICONS: [[u8; 8]; 13] = [
     [0x18, 0x24, 0x7E, 0x42, 0x24, 0x42, 0x81, 0xFF], // Lunar Lander
     [0xFF, 0x81, 0xBD, 0xA1, 0xAD, 0xA5, 0xBD, 0x81], // Maze
     [0x18, 0x18, 0x3C, 0x3C, 0x7E, 0x7E, 0xFF, 0xFF], // Tower
-    [0x7E, 0x81, 0x99, 0xBD, 0xBD, 0x99, 0x81, 0x7E], // Solitaire
+    [0x7E, 0x81, 0x99, 0xBD, 0xBD, 0x99, 0x81, 0x7E], // FreeCell
 ];
 
 pub fn make(i: usize, t: &Trng) -> Box<dyn Game> {
@@ -93,7 +93,7 @@ pub fn make(i: usize, t: &Trng) -> Box<dyn Game> {
         9 => Box::new(Lander::new(t)),
         10 => Box::new(Maze::new(t)),
         11 => Box::new(Tower::new()),
-        _ => Box::new(Solitaire::new(t)),
+        _ => Box::new(FreeCell::new(t)),
     }
 }
 
@@ -2290,7 +2290,7 @@ impl Game for Tower {
     fn take_sound(&mut self) -> Option<Snd> { self.snd.take() }
 }
 
-// ---------------------------------------------------------------- 12 Solitaire (Klondike, draw one)
+// ---------------------------------------------------------------- 12 FreeCell
 // cards: 0..52, rank = c % 13 (0 = ace .. 12 = king), suit = c / 13 (0 spade, 1 heart, 2 diamond, 3 club)
 const GLYPH: [[u8; 5]; 13] = [
     [0b010, 0b101, 0b111, 0b101, 0b101], // A
@@ -2308,10 +2308,10 @@ const GLYPH: [[u8; 5]; 13] = [
     [0b101, 0b101, 0b110, 0b101, 0b101], // K
 ];
 const SUITS: [[u8; 5]; 4] = [
-    [0b00100, 0b01110, 0b11111, 0b11111, 0b00100], // spade
-    [0b01010, 0b11111, 0b11111, 0b01110, 0b00100], // heart
-    [0b00100, 0b01110, 0b11111, 0b01110, 0b00100], // diamond
-    [0b01110, 0b01110, 0b11111, 0b11111, 0b00100], // club
+    [0b00100, 0b01110, 0b11111, 0b00100, 0b01110], // spade: point, wide body, stem and foot
+    [0b01010, 0b11111, 0b11111, 0b01110, 0b00100], // heart: two bumps, point down
+    [0b00100, 0b01010, 0b10001, 0b01010, 0b00100], // diamond: hollow
+    [0b01110, 0b01110, 0b10101, 0b11111, 0b00100], // club: three lobes, stem
 ];
 
 fn is_red(c: u8) -> bool { matches!(c / 13, 1 | 2) }
@@ -2320,61 +2320,53 @@ fn card_face(c: &mut Canvas, x: i32, y: i32, card: u8) {
     for (r, bits) in GLYPH[(card % 13) as usize].iter().enumerate() {
         for col in 0..3 {
             if bits & (0b100 >> col) != 0 {
-                c.dot(x + 2 + col, y + 2 + r as i32, true);
+                c.dot(x + 1 + col, y + 1 + r as i32, true);
             }
         }
     }
     for (r, bits) in SUITS[(card / 13) as usize % 4].iter().enumerate() {
         for col in 0..5 {
             if bits & (0b10000 >> col) != 0 {
-                c.dot(x + 7 + col, y + 2 + r as i32, true);
+                c.dot(x + 6 + col, y + 1 + r as i32, true);
             }
         }
     }
 }
 
-pub struct Solitaire {
-    tab: Vec<Vec<u8>>,
-    up: [usize; 7], // index of the first face-up card in each column
-    stock: Vec<u8>,
-    waste: Vec<u8>,
-    found: [u8; 4],
-    cur: i32, // 0 stock, 1 waste, 2..=8 columns
-    depth: usize, // how many face-up cards of the column are lifted
-    hold: Option<(i32, usize)>, // (source cursor position, number of cards) being carried
+pub struct FreeCell {
+    col: Vec<Vec<u8>>, // 8 columns, the last card is the top; all cards are face up
+    cells: [Option<u8>; 4],
+    found: [u8; 4], // cards placed on each suit's foundation
+    cur: i32, // 0..=3 free cells, 4..=11 columns
+    depth: usize, // how many cards of the column are lifted
+    hold: Option<(i32, usize)>, // (where the carried cards come from, how many)
     ok_down: bool,
     ok_since: Instant,
     ok_fired: bool,
     want_ok: bool,
     dirty: bool,
-    moves: u32,
     snd: Option<Snd>,
 }
 
-impl Solitaire {
+const FC_PH: i32 = 12; // card height
+const FC_TOP: i32 = 14; // y where the columns start
+
+impl FreeCell {
     pub fn new(t: &Trng) -> Self {
         let mut deck: Vec<u8> = (0..52).collect();
         for i in (1..52usize).rev() {
             let j = rnd(t, i as u32 + 1) as usize;
             deck.swap(i, j);
         }
-        let mut tab: Vec<Vec<u8>> = Vec::new();
-        let mut up = [0usize; 7];
-        for col in 0..7 {
-            let mut v = Vec::new();
-            for _ in 0..=col {
-                v.push(deck.pop().unwrap_or(0));
-            }
-            up[col] = col;
-            tab.push(v);
+        let mut col: Vec<Vec<u8>> = vec![Vec::new(); 8];
+        for (i, c) in deck.into_iter().enumerate() {
+            col[i % 8].push(c);
         }
-        Solitaire {
-            tab,
-            up,
-            stock: deck,
-            waste: Vec::new(),
+        FreeCell {
+            col,
+            cells: [None; 4],
             found: [0; 4],
-            cur: 0,
+            cur: 4,
             depth: 1,
             hold: None,
             ok_down: false,
@@ -2382,140 +2374,148 @@ impl Solitaire {
             ok_fired: false,
             want_ok: false,
             dirty: true,
-            moves: 0,
             snd: None,
         }
     }
-    fn col_of(pos: i32) -> Option<usize> { if (2..=8).contains(&pos) { Some((pos - 2) as usize) } else { None } }
-    fn faceup(&self, col: usize) -> usize { self.tab[col].len().saturating_sub(self.up[col]) }
     fn won(&self) -> bool { self.found.iter().map(|&n| n as u32).sum::<u32>() == 52 }
-    fn fix(&mut self, col: usize) {
-        if !self.tab[col].is_empty() && self.up[col] >= self.tab[col].len() {
-            self.up[col] = self.tab[col].len() - 1; // flip the new top card
-        }
-        if self.tab[col].is_empty() {
-            self.up[col] = 0;
-        }
+    fn free_cells(&self) -> usize { self.cells.iter().filter(|c| c.is_none()).count() }
+    fn empty_cols(&self) -> usize { self.col.iter().filter(|c| c.is_empty()).count() }
+    /// How many cards may be moved at once (free cells and empty columns are used as temporary space).
+    fn max_move(&self, dest_empty: bool) -> usize {
+        let empties = self.empty_cols().saturating_sub(if dest_empty { 1 } else { 0 });
+        (self.free_cells() + 1) << empties.min(6)
     }
-    fn can_found(&self, card: u8) -> bool { self.found[(card / 13) as usize % 4] == card % 13 }
-    fn can_stack(&self, card: u8, col: usize) -> bool {
-        match self.tab[col].last() {
-            None => card % 13 == 12,
+    /// Length of the ordered run (alternating colours, descending) at the bottom of a column.
+    fn run_len(&self, c: usize) -> usize {
+        let v = &self.col[c];
+        let mut n = if v.is_empty() { 0 } else { 1 };
+        while n < v.len() {
+            let (lo, hi) = (v[v.len() - n], v[v.len() - n - 1]);
+            if is_red(lo) != is_red(hi) && lo % 13 + 1 == hi % 13 {
+                n += 1;
+            } else {
+                break;
+            }
+        }
+        n
+    }
+    fn max_lift(&self, c: usize) -> usize { self.run_len(c).min(self.max_move(false)).max(1) }
+    fn can_stack(&self, card: u8, c: usize) -> bool {
+        match self.col[c].last() {
+            None => true,
             Some(&t) => is_red(card) != is_red(t) && card % 13 + 1 == t % 13,
         }
     }
-    fn top_of(&self, pos: i32) -> Option<u8> {
-        match pos {
-            1 => self.waste.last().copied(),
-            p => Solitaire::col_of(p).and_then(|c| self.tab[c].last().copied()),
-        }
+    fn top_card(&self, pos: i32) -> Option<u8> {
+        if pos < 4 { self.cells[pos as usize] } else { self.col[(pos - 4) as usize].last().copied() }
     }
-    /// OK released after a short press.
     fn ok_short(&mut self) {
         if let Some((src, n)) = self.hold.take() {
-            // drop the carried cards on the column under the cursor
-            if let Some(dst) = Solitaire::col_of(self.cur) {
-                let cards: Vec<u8> = if src == 1 {
-                    self.waste.last().copied().into_iter().collect()
-                } else {
-                    let sc = (src - 2) as usize;
-                    let l = self.tab[sc].len();
-                    self.tab[sc][l.saturating_sub(n)..].to_vec()
-                };
-                if src != self.cur && !cards.is_empty() && self.can_stack(cards[0], dst) {
-                    if src == 1 {
-                        self.waste.pop();
-                    } else {
-                        let sc = (src - 2) as usize;
-                        let l = self.tab[sc].len();
-                        self.tab[sc].truncate(l.saturating_sub(n));
-                        self.fix(sc);
-                    }
-                    self.tab[dst].extend(cards);
-                    self.fix(dst);
-                    self.moves += 1;
-                    self.snd = Some(Snd::Click);
-                    self.depth = 1;
-                    return;
-                }
-                if src != self.cur {
-                    self.snd = Some(Snd::Crash);
-                }
+            let dst = self.cur;
+            if dst == src {
+                return; // put back
             }
+            let cards: Vec<u8> = if src < 4 {
+                self.cells[src as usize].into_iter().collect()
+            } else {
+                let sc = (src - 4) as usize;
+                let l = self.col[sc].len();
+                self.col[sc][l.saturating_sub(n)..].to_vec()
+            };
+            let ok = if cards.is_empty() {
+                false
+            } else if dst < 4 {
+                n == 1 && self.cells[dst as usize].is_none()
+            } else {
+                let dc = (dst - 4) as usize;
+                self.can_stack(cards[0], dc) && n <= self.max_move(self.col[dc].is_empty())
+            };
+            if !ok {
+                self.snd = Some(Snd::Crash);
+                return;
+            }
+            if src < 4 {
+                self.cells[src as usize] = None;
+            } else {
+                let sc = (src - 4) as usize;
+                let l = self.col[sc].len();
+                self.col[sc].truncate(l.saturating_sub(n));
+            }
+            if dst < 4 {
+                self.cells[dst as usize] = cards.first().copied();
+            } else {
+                self.col[(dst - 4) as usize].extend(cards);
+            }
+            self.depth = 1;
+            self.snd = Some(Snd::Click);
             return;
         }
-        match self.cur {
-            0 => {
-                if let Some(c) = self.stock.pop() {
-                    self.waste.push(c);
-                } else {
-                    while let Some(c) = self.waste.pop() {
-                        self.stock.push(c); // recycle the waste face down
-                    }
-                }
+        if self.cur < 4 {
+            if self.cells[self.cur as usize].is_some() {
+                self.hold = Some((self.cur, 1));
                 self.snd = Some(Snd::Tick);
             }
-            1 => {
-                if !self.waste.is_empty() {
-                    self.hold = Some((1, 1));
-                    self.snd = Some(Snd::Tick);
-                }
-            }
-            p => {
-                if let Some(col) = Solitaire::col_of(p) {
-                    let n = self.depth.clamp(1, self.faceup(col).max(1));
-                    if !self.tab[col].is_empty() {
-                        self.hold = Some((p, n));
-                        self.snd = Some(Snd::Tick);
-                    }
-                }
+        } else {
+            let c = (self.cur - 4) as usize;
+            if !self.col[c].is_empty() {
+                self.hold = Some((self.cur, self.depth.clamp(1, self.max_lift(c))));
+                self.snd = Some(Snd::Tick);
             }
         }
     }
-    /// OK held: send the top card under the cursor to its foundation when that is allowed.
+    /// OK held: the top card under the cursor goes to its foundation if it is the next one needed.
     fn ok_long(&mut self) {
         self.hold = None;
-        if let Some(card) = self.top_of(self.cur) {
-            if self.can_found(card) {
-                self.found[(card / 13) as usize % 4] += 1;
-                if self.cur == 1 {
-                    self.waste.pop();
-                } else if let Some(col) = Solitaire::col_of(self.cur) {
-                    self.tab[col].pop();
-                    self.fix(col);
+        if let Some(card) = self.top_card(self.cur) {
+            let s = (card / 13) as usize % 4;
+            if self.found[s] == card % 13 {
+                self.found[s] += 1;
+                if self.cur < 4 {
+                    self.cells[self.cur as usize] = None;
+                } else {
+                    self.col[(self.cur - 4) as usize].pop();
                 }
-                self.moves += 1;
                 self.snd = Some(if self.won() { Snd::Coin } else { Snd::Click });
-            } else {
-                self.snd = Some(Snd::Crash);
+                return;
             }
+            self.snd = Some(Snd::Crash);
         }
     }
 }
 
-impl Game for Solitaire {
+impl Game for FreeCell {
     fn press(&mut self, b: Btn, _t: &Trng) -> bool {
         if self.won() {
             return false;
         }
         match b {
-            Btn::Left | Btn::Right => {
-                let dir = if b == Btn::Right { 1 } else { -1 };
-                let lo = if self.hold.is_some() { 2 } else { 0 };
-                let n = 9 - lo;
-                self.cur = lo + (self.cur - lo + dir + n).rem_euclid(n);
+            Btn::Left => {
+                self.cur = (self.cur + 11) % 12;
+                self.depth = 1;
+            }
+            Btn::Right => {
+                self.cur = (self.cur + 1) % 12;
                 self.depth = 1;
             }
             Btn::Up | Btn::Down => {
-                if self.hold.is_none() {
-                    if let Some(col) = Solitaire::col_of(self.cur) {
-                        let fu = self.faceup(col).max(1);
-                        if b == Btn::Up {
-                            self.depth = (self.depth + 1).min(fu);
+                // jump between the free cells and the columns, or (on a column, not carrying) lift more / fewer cards
+                if self.hold.is_none() && self.cur >= 4 {
+                    let c = (self.cur - 4) as usize;
+                    if b == Btn::Up {
+                        if self.depth >= self.max_lift(c) {
+                            self.cur = ((self.cur - 4).min(3)).max(0); // past the top: go to the free cell above
+                            self.depth = 1;
                         } else {
-                            self.depth = self.depth.saturating_sub(1).max(1);
+                            self.depth += 1;
                         }
+                    } else {
+                        self.depth = self.depth.saturating_sub(1).max(1);
                     }
+                } else if self.cur < 4 && b == Btn::Down {
+                    self.cur += 4;
+                    self.depth = 1;
+                } else if self.hold.is_some() && b == Btn::Up && self.cur >= 4 {
+                    self.cur = (self.cur - 4).min(3);
                 }
             }
             Btn::Ok => {
@@ -2555,96 +2555,78 @@ impl Game for Solitaire {
         d
     }
     fn draw(&self, c: &mut Canvas, _best: u32) {
-        let ph = 14; // card height
-        let slot = |i: i32| 1 + i * 18;
-        // stock (face-down pattern), waste (top card), and the four foundations in slots 3..6
-        rc(c, slot(0), 0, 16, ph);
-        if !self.stock.is_empty() {
-            for yy in 1..ph - 1 {
-                for xx in 1..15 {
-                    if (xx + yy) % 2 == 0 {
-                        c.dot(slot(0) + xx, yy, true);
-                    }
-                }
+        let slot = |i: i32| i * 16;
+        // free cells (slots 0..3) and foundations (slots 4..7)
+        for i in 0..4i32 {
+            let x = slot(i);
+            fr(c, x, 0, 15, FC_PH, false);
+            rc(c, x, 0, 15, FC_PH);
+            if let Some(card) = self.cells[i as usize] {
+                card_face(c, x, 0, card);
             }
-        } else if !self.waste.is_empty() {
-            txt(c, slot(0) + 5, 1, "o");
-        }
-        if let Some(&w) = self.waste.last() {
-            fr(c, slot(1), 0, 16, ph, false);
-            rc(c, slot(1), 0, 16, ph);
-            card_face(c, slot(1), 0, w);
+            if self.cur == i {
+                c.invert_rect(x as usize, 0, 15, FC_PH as usize);
+            }
         }
         for s in 0..4usize {
-            let x = slot(3 + s as i32);
-            rc(c, x, 0, 16, ph);
+            let x = slot(4 + s as i32);
+            rc(c, x, 0, 15, FC_PH);
             if self.found[s] > 0 {
                 card_face(c, x, 0, (s as u8) * 13 + self.found[s] - 1);
             } else {
                 for (r, bits) in SUITS[s].iter().enumerate() {
-                    for col in 0..5 {
-                        if bits & (0b10000 >> col) != 0 && (col + r as i32) % 2 == 0 {
-                            c.dot(x + 5 + col, 4 + r as i32, true);
+                    for k in 0..5 {
+                        if bits & (0b10000 >> k) != 0 && (k + r as i32) % 2 == 0 {
+                            c.dot(x + 5 + k, 3 + r as i32, true);
                         }
                     }
                 }
             }
         }
-        // the tableau
-        let top = 16;
-        for col in 0..7usize {
-            let x = slot(col as i32);
-            let n = self.tab[col].len();
+        // the eight columns
+        for ci in 0..8usize {
+            let x = slot(ci as i32);
+            let n = self.col[ci].len();
             if n == 0 {
-                rc(c, x, top, 16, ph);
+                rc(c, x, FC_TOP, 15, FC_PH);
+                if self.cur == 4 + ci as i32 {
+                    c.invert_rect(x as usize, FC_TOP as usize, 15, FC_PH as usize);
+                }
                 continue;
             }
-            let upn = self.up[col].min(n);
-            let fu = n - upn;
-            let fd_step = 3;
-            let budget = 64 - top - ph - upn as i32 * fd_step;
-            let step = if fu > 1 { (budget / (fu as i32 - 1)).clamp(4, 8) } else { 8 };
-            // y position of every card
-            let mut ys: Vec<i32> = Vec::with_capacity(n);
-            let mut y = top;
-            for k in 0..n {
-                ys.push(y);
-                y += if k < upn { fd_step } else { step };
+            let step = if n > 1 { ((64 - FC_TOP - FC_PH) / (n as i32 - 1)).clamp(3, 8) } else { 8 };
+            for (k, &card) in self.col[ci].iter().enumerate() {
+                let y = FC_TOP + k as i32 * step;
+                fr(c, x, y, 15, FC_PH, false);
+                rc(c, x, y, 15, FC_PH);
+                card_face(c, x, y, card);
             }
-            for (k, &card) in self.tab[col].iter().enumerate() {
-                fr(c, x, ys[k], 16, ph, false);
-                rc(c, x, ys[k], 16, ph);
-                if k < upn {
-                    for xx in 1..15 {
-                        if xx % 2 == 0 {
-                            c.dot(x + xx, ys[k] + 1, true);
-                        }
-                    }
-                } else {
-                    card_face(c, x, ys[k], card);
-                }
-            }
-            // highlight the lifted (or about to be lifted) cards of this column
             let lifted = match self.hold {
-                Some((src, cnt)) if src == col as i32 + 2 => Some(cnt),
-                None if self.cur == col as i32 + 2 => Some(self.depth.clamp(1, fu.max(1))),
+                Some((src, cnt)) if src == 4 + ci as i32 => Some(cnt),
+                None if self.cur == 4 + ci as i32 => Some(self.depth.clamp(1, self.max_lift(ci))),
                 _ => None,
             };
             if let Some(cnt) = lifted {
                 let first = n - cnt.min(n);
-                let y0 = ys[first];
-                let y1 = (ys[n - 1] + ph).min(64);
+                let y0 = FC_TOP + first as i32 * step;
+                let y1 = (FC_TOP + (n as i32 - 1) * step + FC_PH).min(64);
                 if y1 > y0 {
-                    c.invert_rect(x as usize, y0.max(0) as usize, 16, (y1 - y0) as usize);
+                    c.invert_rect(x as usize, y0.max(0) as usize, 15, (y1 - y0) as usize);
                 }
             }
+            // target marker while carrying: a small arrow above the column
+            if self.hold.is_some() && self.cur == 4 + ci as i32 {
+                fr(c, x + 4, FC_TOP - 2, 7, 1, true);
+                fr(c, x + 5, FC_TOP - 1, 5, 1, true);
+            }
         }
-        // cursor on stock / waste, or the target column while carrying
-        if self.cur < 2 {
-            rc(c, slot(self.cur) - 1, 0, 18, ph + 1);
-        } else if self.hold.is_some() {
-            let x = slot(self.cur - 2);
-            rc(c, x - 1, top - 2, 18, 3);
+        if self.hold.is_some() {
+            if self.cur >= 4 && self.col[(self.cur - 4) as usize].is_empty() {
+                let x = slot(self.cur - 4);
+                fr(c, x + 4, FC_TOP - 2, 7, 1, true);
+            } else if self.cur < 4 {
+                rc(c, slot(self.cur) - 1, -1, 17, FC_PH + 2);
+            }
         }
         if self.won() {
             over_box(c, "YOU WON!");

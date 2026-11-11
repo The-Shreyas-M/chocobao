@@ -97,9 +97,24 @@ impl Canvas {
 
     /// Filled (or cleared) rectangle.
     pub fn fill_rect(&mut self, x: usize, y: usize, w: usize, h: usize, on: bool) {
-        for yy in y..y.saturating_add(h) {
-            for xx in x..x.saturating_add(w) {
-                self.pixel(xx, yy, on);
+        // one byte covers 8 pixel rows, so work column by column with masks (about 8x faster than pixel by pixel)
+        let (x1, y1) = (x.saturating_add(w).min(W), y.saturating_add(h).min(H));
+        if x >= x1 || y >= y1 {
+            return;
+        }
+        for page in (y / 8)..=((y1 - 1) / 8) {
+            let (top, bot) = (page * 8, page * 8 + 8);
+            let (a, b) = (y.max(top) - top, y1.min(bot) - top); // rows a..b inside this page
+            let mask = (0xFFu16 << a) as u8 & (0xFFu16 >> (8 - b)) as u8;
+            let row = &mut self.fb[page * W + x..page * W + x1];
+            if on {
+                for v in row.iter_mut() {
+                    *v |= mask;
+                }
+            } else {
+                for v in row.iter_mut() {
+                    *v &= !mask;
+                }
             }
         }
     }

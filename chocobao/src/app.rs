@@ -69,6 +69,8 @@ enum MenuId {
     Utilities,
     Games,
     Music,
+    MusicTracks,
+    MusicTools,
     Lab,
     Settings,
 }
@@ -107,41 +109,51 @@ static UTIL_ITEMS: [Item; 17] = [
     it("Text presets", &I_WORDS, "Hold OK types a text"),
     it("Flashlight", &I_INFO, "White screen, strobe"),
 ];
-static GAME_ITEMS: [Item; 25] = [
-    it("Mempool Dodger", &I_DODGER, "Dodge blocks, grab coins"),
-    it("Snake", &I_SNAKE, "Eat, grow, don't crash"),
-    it("Pong", &I_PONG, "You vs the computer"),
-    it("Flappy Bird", &I_BIRD, "Fly through the gaps"),
-    it("Simon", &I_SIMON, "Repeat the arrow pattern"),
-    it("Reaction", &I_BOLT, "How fast are you?"),
-    it("Doom", &I_CROSS, "3D shooter, 3 levels"),
-    it("Pac-Man", &I_PAC, "Eat the dots, dodge ghosts"),
-    it("Magic 8-ball", &I_BALL, "Ask a yes/no question"),
-    it(crate::games2::NAMES[0], &crate::games2::ICONS[0], crate::games2::DESCS[0]),
-    it(crate::games2::NAMES[1], &crate::games2::ICONS[1], crate::games2::DESCS[1]),
-    it(crate::games2::NAMES[2], &crate::games2::ICONS[2], crate::games2::DESCS[2]),
-    it(crate::games2::NAMES[3], &crate::games2::ICONS[3], crate::games2::DESCS[3]),
-    it(crate::games2::NAMES[4], &crate::games2::ICONS[4], crate::games2::DESCS[4]),
-    it(crate::games2::NAMES[5], &crate::games2::ICONS[5], crate::games2::DESCS[5]),
-    it(crate::games2::NAMES[6], &crate::games2::ICONS[6], crate::games2::DESCS[6]),
-    it(crate::games2::NAMES[7], &crate::games2::ICONS[7], crate::games2::DESCS[7]),
-    it(crate::games2::NAMES[8], &crate::games2::ICONS[8], crate::games2::DESCS[8]),
-    it(crate::games2::NAMES[9], &crate::games2::ICONS[9], crate::games2::DESCS[9]),
-    it(crate::games2::NAMES[10], &crate::games2::ICONS[10], crate::games2::DESCS[10]),
-    it(crate::games2::NAMES[11], &crate::games2::ICONS[11], crate::games2::DESCS[11]),
-    it(crate::games2::NAMES[12], &crate::games2::ICONS[12], crate::games2::DESCS[12]),
+/// Menu order of the games: ids (0..=7 old games, 8 Magic 8-ball, 9.. = games2 index + 9).
+const GAME_ORDER: [usize; 27] = [6, 22, 23, 24, 25, 26, 17, 10, 7, 20, 19, 18, 9, 0, 3, 1, 2, 16, 21, 11, 13, 15, 14, 12, 4, 5, 8];
+fn game_pos(id: usize) -> usize { GAME_ORDER.iter().position(|&g| g == id).unwrap_or(0) }
+
+static GAME_ITEMS: [Item; 27] = [
+    it("Doom", &I_CROSS, "3D shooter, 5 levels"),
     it(crate::games2::NAMES[13], &crate::games2::ICONS[13], crate::games2::DESCS[13]),
     it(crate::games2::NAMES[14], &crate::games2::ICONS[14], crate::games2::DESCS[14]),
     it(crate::games2::NAMES[15], &crate::games2::ICONS[15], crate::games2::DESCS[15]),
+    it(crate::games2::NAMES[16], &crate::games2::ICONS[16], crate::games2::DESCS[16]),
+    it(crate::games2::NAMES[17], &crate::games2::ICONS[17], crate::games2::DESCS[17]),
+    it(crate::games2::NAMES[8], &crate::games2::ICONS[8], crate::games2::DESCS[8]),
+    it(crate::games2::NAMES[1], &crate::games2::ICONS[1], crate::games2::DESCS[1]),
+    it("Pac-Man", &I_PAC, "Eat the dots, dodge ghosts"),
+    it(crate::games2::NAMES[11], &crate::games2::ICONS[11], crate::games2::DESCS[11]),
+    it(crate::games2::NAMES[10], &crate::games2::ICONS[10], crate::games2::DESCS[10]),
+    it(crate::games2::NAMES[9], &crate::games2::ICONS[9], crate::games2::DESCS[9]),
+    it(crate::games2::NAMES[0], &crate::games2::ICONS[0], crate::games2::DESCS[0]),
+    it("Mempool Dodger", &I_DODGER, "Dodge blocks, grab coins"),
+    it("Flappy Bird", &I_BIRD, "Fly through the gaps"),
+    it("Snake", &I_SNAKE, "Eat, grow, don't crash"),
+    it("Pong", &I_PONG, "You vs the computer"),
+    it(crate::games2::NAMES[7], &crate::games2::ICONS[7], crate::games2::DESCS[7]),
+    it(crate::games2::NAMES[12], &crate::games2::ICONS[12], crate::games2::DESCS[12]),
+    it(crate::games2::NAMES[2], &crate::games2::ICONS[2], crate::games2::DESCS[2]),
+    it(crate::games2::NAMES[4], &crate::games2::ICONS[4], crate::games2::DESCS[4]),
+    it(crate::games2::NAMES[6], &crate::games2::ICONS[6], crate::games2::DESCS[6]),
+    it(crate::games2::NAMES[5], &crate::games2::ICONS[5], crate::games2::DESCS[5]),
+    it(crate::games2::NAMES[3], &crate::games2::ICONS[3], crate::games2::DESCS[3]),
+    it("Simon", &I_SIMON, "Repeat the arrow pattern"),
+    it("Reaction", &I_BOLT, "How fast are you?"),
+    it("Magic 8-ball", &I_BALL, "Ask a yes/no question"),
 ];
-static MUSIC_ITEMS: [Item; 6] = [
+static MUSIC_ITEMS: [Item; 2] = [
+    it("Tracks", &I_SPEAKER, "Songs: play from the list"),
+    it("Tools", &I_HOURGLASS, "Metronome"),
+];
+static TRACK_ITEMS: [Item; 5] = [
     it("Closer", &I_SPEAKER, "The Chainsmokers"),
     it("Blinding Lights", &I_SPEAKER, "The Weeknd"),
     it("Attention", &I_SPEAKER, "Charlie Puth"),
     it("Heavenly Jumpstyle", &I_SPEAKER, "Heavenly"),
     it("AURA", &I_SPEAKER, "Ogryzek"),
-    it("Metronome", &I_HOURGLASS, "Tempo clicks, beats"),
 ];
+static MTOOL_ITEMS: [Item; 1] = [it("Metronome", &I_HOURGLASS, "Tempo clicks, beats")];
 static LAB_ITEMS: [Item; 5] = [
     it("Mandelbrot", &I_BUN, "Endless fractal zoom"),
     it("SOS beeps", &I_SPEAKER, "Morse SOS on the buzzer"),
@@ -166,6 +178,8 @@ fn items(m: MenuId) -> &'static [Item] {
         MenuId::Utilities => &UTIL_ITEMS,
         MenuId::Games => &GAME_ITEMS,
         MenuId::Music => &MUSIC_ITEMS,
+        MenuId::MusicTracks => &TRACK_ITEMS,
+        MenuId::MusicTools => &MTOOL_ITEMS,
         MenuId::Lab => &LAB_ITEMS,
         MenuId::Settings => &SET_ITEMS,
     }
@@ -177,6 +191,8 @@ fn menu_title(m: MenuId) -> &'static str {
         MenuId::Utilities => "Tools",
         MenuId::Games => "Games",
         MenuId::Music => "Music",
+        MenuId::MusicTracks => "Tracks",
+        MenuId::MusicTools => "Music tools",
         MenuId::Lab => "Lab",
         MenuId::Settings => "Settings",
     }
@@ -196,9 +212,9 @@ const H_SEED: usize = 17;
 const H_MANDEL: usize = 18;
 const H_CLOCK: usize = 19;
 const H_PLAYER: usize = 21;
-const H_GAME2: usize = 22; // 16 more games: 22..=37
-const H_TOOL0: usize = 38; // 13 tools: 38..=50
-const HELP_COUNT: usize = 51;
+const H_GAME2: usize = 22; // 18 more games: 22..=39
+const H_TOOL0: usize = 40; // 13 tools: 40..=52
+const HELP_COUNT: usize = 53;
 
 fn help_text(id: usize) -> (&'static str, [&'static str; 4]) {
     match id {
@@ -333,10 +349,12 @@ fn parent(s: &Screen) -> Screen {
         Screen::Menu(MenuId::Utilities, _) => Screen::Menu(MenuId::Main, 0),
         Screen::Menu(MenuId::Games, _) => Screen::Menu(MenuId::Main, 1),
         Screen::Menu(MenuId::Music, _) => Screen::Menu(MenuId::Main, 2),
+        Screen::Menu(MenuId::MusicTracks, _) => Screen::Menu(MenuId::Music, 0),
+        Screen::Menu(MenuId::MusicTools, _) => Screen::Menu(MenuId::Music, 1),
         Screen::Menu(MenuId::Lab, _) => Screen::Menu(MenuId::Main, 3),
         Screen::Menu(MenuId::Settings, _) => Screen::Menu(MenuId::Main, 4),
         Screen::Help { then, .. } => match then {
-            Then::Game(i) => Screen::Menu(MenuId::Games, *i),
+            Then::Game(i) => Screen::Menu(MenuId::Games, game_pos(*i)),
             Then::Open(b) => parent(b),
         },
         Screen::PwGen { from, .. } => Screen::Menu(MenuId::Utilities, *from),
@@ -348,14 +366,14 @@ fn parent(s: &Screen) -> Screen {
         Screen::Seed { .. } => Screen::Menu(MenuId::Utilities, 8),
         Screen::Mandel(_) => Screen::Menu(MenuId::Lab, 0),
         Screen::Clock { .. } => Screen::Menu(MenuId::Utilities, 9),
-        Screen::Player { idx, .. } => Screen::Menu(MenuId::Music, *idx),
+        Screen::Player { idx, .. } => Screen::Menu(MenuId::MusicTracks, *idx),
         Screen::SaverPick => Screen::Menu(MenuId::Settings, 0),
         Screen::Tool(t) => {
             let (m, i) = t.menu_slot();
-            Screen::Menu([MenuId::Utilities, MenuId::Music, MenuId::Lab][m as usize], i)
+            Screen::Menu([MenuId::Utilities, MenuId::MusicTools, MenuId::Lab][m as usize], i)
         }
-        Screen::Game { idx, .. } => Screen::Menu(MenuId::Games, *idx),
-        Screen::Ball(_) => Screen::Menu(MenuId::Games, 8),
+        Screen::Game { idx, .. } => Screen::Menu(MenuId::Games, game_pos(*idx)),
+        Screen::Ball(_) => Screen::Menu(MenuId::Games, game_pos(8)),
         Screen::ButtonTest => Screen::Menu(MenuId::Settings, 4),
         Screen::Stats { .. } => Screen::Menu(MenuId::Settings, 5),
         Screen::Diag => Screen::Menu(MenuId::Settings, 6),
@@ -595,6 +613,16 @@ impl App {
             self.goto(Screen::Help { id: help, then: Then::Game(idx) });
         } else {
             self.start_game(idx);
+        }
+    }
+
+    fn open_game_id(&mut self, id: usize) {
+        if id < 8 {
+            self.open_game(id);
+        } else if id == 8 {
+            self.open(H_GAME + 8, Screen::Ball(None));
+        } else {
+            self.open_game2(id - 9);
         }
     }
 
@@ -1105,8 +1133,7 @@ impl App {
                 let idx = rng::seed_words(&self.trng, 12).unwrap_or_default();
                 self.open(H_SEED, Screen::Seed { n: 12, idx, page: 0 })
             }
-            (MenuId::Games, i) if i < GAMES.len() => self.open_game(i),
-            (MenuId::Games, 8) => self.open(H_GAME + 8, Screen::Ball(None)),
+            (MenuId::Games, pos) if pos < GAME_ORDER.len() => self.open_game_id(GAME_ORDER[pos]),
             (MenuId::Utilities, 9) => self.open(H_CLOCK, Screen::Clock { edit: false }),
             (MenuId::Utilities, 10) => self.open_tool(crate::tools2::Kind::Calc),
             (MenuId::Utilities, 11) => self.open_tool(crate::tools2::Kind::Units),
@@ -1115,12 +1142,13 @@ impl App {
             (MenuId::Utilities, 14) => self.open_tool(crate::tools2::Kind::Morse),
             (MenuId::Utilities, 15) => self.open_tool(crate::tools2::Kind::Typer),
             (MenuId::Utilities, 16) => self.open_tool(crate::tools2::Kind::Flash),
-            (MenuId::Music, 5) => self.open_tool(crate::tools2::Kind::Metro),
+            (MenuId::Music, 0) => self.goto(Screen::Menu(MenuId::MusicTracks, 0)),
+            (MenuId::Music, 1) => self.goto(Screen::Menu(MenuId::MusicTools, 0)),
+            (MenuId::MusicTools, 0) => self.open_tool(crate::tools2::Kind::Metro),
             (MenuId::Lab, 2) => self.open_tool(crate::tools2::Kind::Scope),
             (MenuId::Lab, 3) => self.open_tool(crate::tools2::Kind::Health),
             (MenuId::Lab, 4) => self.open_tool(crate::tools2::Kind::Notary),
-            (MenuId::Games, i) if i >= 9 && i < 25 => self.open_game2(i - 9),
-            (MenuId::Music, 0..=4) => {
+            (MenuId::MusicTracks, 0..=4) => {
                 self.snd.silence();
                 self.song_ended = false;
                 self.open(H_PLAYER, Screen::Player { idx: sel, playing: false })

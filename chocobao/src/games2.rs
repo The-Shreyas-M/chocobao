@@ -14,7 +14,7 @@ use crate::games::{Game, Snd};
 use crate::oled::Canvas;
 use crate::rng::below;
 
-pub const NAMES: [&str; 16] = [
+pub const NAMES: [&str; 18] = [
     "Breakout",
     "Tetris",
     "2048",
@@ -31,9 +31,11 @@ pub const NAMES: [&str; 16] = [
     "Jetpack Joyride",
     "Road Rush",
     "Subway Run",
+    "Ninja Run",
+    "Star Drifter",
 ];
 
-pub const DESCS: [&str; 16] = [
+pub const DESCS: [&str; 18] = [
     "Smash all the bricks",
     "Stack falling blocks",
     "Merge tiles to 2048",
@@ -50,9 +52,11 @@ pub const DESCS: [&str; 16] = [
     "Fly, dodge, vehicles",
     "3D bike race, nitro",
     "Dodge trains, coins",
+    "Ninja platformer",
+    "3D space, endless",
 ];
 
-pub const HELP: [[&str; 4]; 16] = [
+pub const HELP: [[&str; 4]; 18] = [
     ["<> move paddle", "OK launch the ball", "clear every brick", "3 lives"],
     ["<> move  ^ rotate", "v soft drop", "OK = hard drop", "clear full lines"],
     ["^v<> slide tiles", "equal tiles merge", "reach 2048", "no moves = game over"],
@@ -66,13 +70,15 @@ pub const HELP: [[&str; 4]; 16] = [
     ["^v<> walk", "find the exit", "at the far corner", "3 levels, bigger each"],
     ["OK drops the block", "land it on the tower", "overhang is cut off", "perfect = bonus"],
     ["<> pile  ^v lift more", "OK lift / OK drop", "HOLD OK: send to top", "down red/black, A-K"],
-    ["hold OK = fly, 3 lives", "dodge zaps, missiles", "S shield M magnet", "B bike C crush G grav"],
+    ["OK/UP = fly, 3 lives", "<> or v = shoot gun", "S M 2 B C G boxes", "shoot missiles, men"],
     ["<> steer, DOWN brake", "OK / UP = nitro boost", "grab cans for nitro", "cars cost a life"],
     ["<> change lane", "UP jump, DOWN slide", "jump low barriers", "slide under beams"],
+    ["< > run  UP jump (x2)", "OK throw shuriken", "stomp or hit samurai", "dodge spikes, saws"],
+    ["<> turn  ^v pitch", "hold OK = fire laser", "shoot enemy ships", "endless 3D universe"],
 ];
 
 /// 8x8 menu icons, one byte per row, most significant bit = leftmost pixel.
-pub const ICONS: [[u8; 8]; 16] = [
+pub const ICONS: [[u8; 8]; 18] = [
     [0xFF, 0x00, 0xDB, 0x00, 0x00, 0x10, 0x00, 0x7E], // Breakout
     [0x00, 0x18, 0x18, 0x7E, 0x00, 0x6C, 0x6C, 0x00], // Block Drop
     [0x7E, 0x81, 0xB9, 0xA1, 0xB9, 0x85, 0xB9, 0x7E], // 2048
@@ -89,6 +95,8 @@ pub const ICONS: [[u8; 8]; 16] = [
     [0x18, 0x3C, 0x24, 0x7E, 0x5A, 0x18, 0x24, 0x66], // Jetpack
     [0x00, 0x18, 0x3C, 0x5A, 0x18, 0x24, 0x42, 0x81], // Road Rush
     [0x00, 0x42, 0x42, 0x5A, 0x5A, 0x5A, 0x42, 0xFF], // Subway Run
+    [0x18, 0x3C, 0x5A, 0x18, 0x3C, 0x24, 0x42, 0x81], // Ninja Run
+    [0x10, 0x54, 0x38, 0xFE, 0x38, 0x54, 0x10, 0x00], // Star Drifter
 ];
 
 pub fn make(i: usize, t: &Trng) -> Box<dyn Game> {
@@ -108,7 +116,9 @@ pub fn make(i: usize, t: &Trng) -> Box<dyn Game> {
         12 => Box::new(Solitaire::new(t)),
         13 => Box::new(Jetpack::new()),
         14 => Box::new(RoadRush::new()),
-        _ => Box::new(Subway::new()),
+        15 => Box::new(Subway::new()),
+        16 => Box::new(Ninja::new(t)),
+        _ => Box::new(Drifter::new(t)),
     }
 }
 
@@ -2725,6 +2735,8 @@ struct JObj {
     w: i32,
     h: i32,
     t: f32,
+    vx: f32,
+    vy: f32,
 }
 
 pub struct Jetpack {
@@ -2743,6 +2755,9 @@ pub struct Jetpack {
     grav_up: bool,
     inv: f32,
     sci: u32,
+    bullets: Vec<(f32, f32)>,
+    gun_cd: f32,
+    shooting: bool,
     lives: i32,
     gap: f32,
     alive: bool,
@@ -2770,6 +2785,9 @@ impl Jetpack {
             grav_up: false,
             inv: 0.0,
             sci: 0,
+            bullets: Vec::new(),
+            gun_cd: 0.0,
+            shooting: false,
             lives: 3,
             gap: 40.0,
             alive: true,
@@ -2799,24 +2817,24 @@ impl Jetpack {
                 let wave = rnd(t, 2) == 0;
                 for i in 0..n {
                     let dy = if wave { ((i as f32 * 0.9).sin() * 7.0) as i32 } else { 0 };
-                    self.objs.push(JObj { kind: 0, sub: 0, x: x0 + i as f32 * 9.0, y: (base + dy) as f32, w: 5, h: 5, t: 0.0 });
+                    self.objs.push(JObj { kind: 0, sub: 0, x: x0 + i as f32 * 9.0, y: (base + dy) as f32, w: 5, h: 5, t: 0.0, vx: 0.0, vy: 0.0 });
                 }
                 self.gap = 70.0 + n as f32 * 9.0;
             }
             4..=6 => {
                 if rnd(t, 2) == 0 {
                     let len = 18 + rnd(t, 16) as i32;
-                    self.objs.push(JObj { kind: 1, sub: 0, x: x0, y: (14 + rnd(t, 36)) as f32, w: len, h: 3, t: 0.0 });
+                    self.objs.push(JObj { kind: 1, sub: 0, x: x0, y: (14 + rnd(t, 36)) as f32, w: len, h: 3, t: 0.0, vx: 0.0, vy: 0.0 });
                 } else {
                     let len = 16 + rnd(t, 18) as i32;
                     let y = JP_TOP + 2 + rnd(t, (JP_BOT - JP_TOP - len - 4).max(1) as u32) as i32;
-                    self.objs.push(JObj { kind: 1, sub: 0, x: x0, y: y as f32, w: 3, h: len, t: 0.0 });
+                    self.objs.push(JObj { kind: 1, sub: 0, x: x0, y: y as f32, w: 3, h: len, t: 0.0, vx: 0.0, vy: 0.0 });
                 }
                 self.gap = 60.0 + rnd(t, 50) as f32;
             }
             7 | 8 => {
                 // a missile: a warning shows first, then it flies in fast
-                self.objs.push(JObj { kind: 2, sub: 0, x: 119.0, y: (14 + rnd(t, 40)) as f32, w: 7, h: 9, t: 1.0 });
+                self.objs.push(JObj { kind: 2, sub: 0, x: 119.0, y: (14 + rnd(t, 40)) as f32, w: 7, h: 9, t: 1.0, vx: 0.0, vy: 0.0 });
                 self.gap = 80.0;
             }
             _ => {
@@ -2830,7 +2848,7 @@ impl Jetpack {
                 };
                 // vehicles need room to land: bike and crusher boxes float low
                 let y = if kind == 6 && sub != 3 { (JP_BOT - 28) as f32 } else { (16 + rnd(t, 34)) as f32 };
-                self.objs.push(JObj { kind, sub, x: x0, y, w: 9, h: 9, t: 0.0 });
+                self.objs.push(JObj { kind, sub, x: x0, y, w: 9, h: 9, t: 0.0, vx: 0.0, vy: 0.0 });
                 self.gap = 90.0;
             }
         }
@@ -2838,7 +2856,7 @@ impl Jetpack {
         if rnd(t, 4) == 0 {
             let n = 2 + rnd(t, 2) as i32;
             for i in 0..n {
-                self.objs.push(JObj { kind: 8, sub: 0, x: x0 + 30.0 + i as f32 * 11.0, y: (JP_BOT - 7) as f32, w: 5, h: 8, t: 0.0 });
+                self.objs.push(JObj { kind: 8, sub: 0, x: x0 + 30.0 + i as f32 * 11.0, y: (JP_BOT - 7) as f32, w: 5, h: 8, t: 0.0, vx: 0.0, vy: 0.0 });
             }
         }
     }
@@ -2886,7 +2904,10 @@ impl Game for Jetpack {
         }
         false
     }
-    fn held(&mut self, down: &[bool; 6]) { self.thrust = down[0] || down[1]; }
+    fn held(&mut self, down: &[bool; 6]) {
+        self.thrust = down[0] || down[1];
+        self.shooting = down[2] || down[3] || down[4]; // DOWN, LEFT or RIGHT fires the gun
+    }
     fn update(&mut self, t: &Trng) -> bool {
         if !self.alive || self.paused {
             return false;
@@ -2945,6 +2966,42 @@ impl Game for Jetpack {
             self.spawn(t);
         }
         let (px, py) = (if self.on_floor_mode() { 14 } else { 20 }, self.y as i32);
+        // the gun
+        self.gun_cd = (self.gun_cd - dt).max(0.0);
+        if self.shooting && self.gun_cd <= 0.0 {
+            self.gun_cd = 0.2;
+            self.bullets.push(((px + 12) as f32, (py + 6) as f32));
+            self.snd = Some(Snd::Tick);
+        }
+        for b in self.bullets.iter_mut() {
+            b.0 += 260.0 * dt;
+        }
+        for b in self.bullets.iter_mut() {
+            for o in self.objs.iter_mut() {
+                let inside = b.0 + 3.0 > o.x && b.0 < o.x + o.w as f32 && b.1 + 1.0 > o.y && b.1 < o.y + o.h as f32;
+                if !inside {
+                    continue;
+                }
+                match o.kind {
+                    8 => {
+                        o.x = -200.0; // gone
+                        self.sci += 1;
+                        self.coins += 1;
+                        b.0 = 400.0;
+                        self.snd = Some(Snd::Click);
+                    }
+                    5 => {
+                        o.x = -200.0;
+                        self.coins += 2;
+                        b.0 = 400.0;
+                        self.snd = Some(Snd::Crash);
+                    }
+                    1 => b.0 = 400.0, // zappers stop bullets
+                    _ => {}
+                }
+            }
+        }
+        self.bullets.retain(|b| b.0 < 135.0);
         let mut dead = false;
         let mut i = 0;
         let mut mount: Option<u8> = None;
@@ -2963,7 +3020,26 @@ impl Game for Jetpack {
                     }
                 }
                 5 => o.x -= (sp + 110.0) * dt,
-                8 => o.x -= (sp - 14.0) * dt, // scientists stroll along with the floor
+                8 => {
+                    // scientists run about in a panic: sudden changes of direction, hops, arms in the air
+                    o.x -= sp * dt;
+                    o.x += o.vx * dt;
+                    o.t -= dt;
+                    let floor = (JP_BOT - 7) as f32;
+                    if o.t <= 0.0 {
+                        o.t = 0.12 + rnd(t, 40) as f32 / 100.0;
+                        o.vx = rnd(t, 130) as f32 - 75.0;
+                        if o.y >= floor - 0.5 && rnd(t, 3) == 0 {
+                            o.vy = -85.0;
+                        }
+                    }
+                    o.vy += 330.0 * dt;
+                    o.y += o.vy * dt;
+                    if o.y > floor {
+                        o.y = floor;
+                        o.vy = 0.0;
+                    }
+                }
                 0 if magnet && o.x < 70.0 => {
                     // the magnet pulls coins in
                     let (dx, dy) = ((px + 3) as f32 - o.x, (py + 4) as f32 - o.y);
@@ -3072,10 +3148,6 @@ impl Game for Jetpack {
         fr(c, 0, JP_TOP - 1, 128, 1, true);
         fr(c, 0, JP_BOT + 1, 128, 1, true);
         // lab windows and far dots slide by: you can feel the speed
-        for i in 0..5i32 {
-            let x = 127 - ((self.dist as i32 * 2 / 3 + i * 31) % 128);
-            rc(c, x, JP_TOP + 6 + (i * 13) % 22, 6, 4);
-        }
         for i in 0..6i32 {
             c.dot(127 - ((self.dist as i32 + i * 47) % 128), JP_TOP + 3 + (i * 19) % 44, true);
         }
@@ -3083,8 +3155,13 @@ impl Game for Jetpack {
             let (x, y) = (o.x as i32, o.y as i32);
             match o.kind {
                 0 => {
-                    rc(c, x, y, 5, 5);
-                    c.dot(x + 2, y + 2, true);
+                    // a round coin
+                    c.line(x + 1, y, x + 3, y);
+                    c.line(x + 1, y + 4, x + 3, y + 4);
+                    c.line(x, y + 1, x, y + 3);
+                    c.line(x + 4, y + 1, x + 4, y + 3);
+                    c.dot(x + 2, y + 1, true);
+                    c.dot(x + 2, y + 3, true);
                 }
                 1 => {
                     let ph = (self.clock / 70) as i32;
@@ -3130,10 +3207,21 @@ impl Game for Jetpack {
                     }
                 }
                 8 => {
-                    let f = ((self.clock / 140) % 2) as usize;
-                    fr(c, x, y, 5, 8, false);
+                    let f = ((self.clock / 110 + x as u32) % 2) as usize;
+                    fr(c, x - 1, y - 1, 7, 9, false);
                     sprite8(c, x, y, &SCI[f], 5);
                     c.dot(x + 1, y + 1, false); // glasses
+                    if f == 0 {
+                        c.dot(x - 1, y + 2, true); // arms thrown up
+                        c.dot(x + 5, y + 2, true);
+                        c.dot(x - 1, y + 1, true);
+                        c.dot(x + 5, y + 1, true);
+                    }
+                    if (self.clock / 400 + x as u32) % 3 == 0 {
+                        c.dot(x + 2, y - 4, true); // "!"
+                        c.dot(x + 2, y - 3, true);
+                        c.dot(x + 2, y - 1, true);
+                    }
                 }
                 _ => {
                     fr(c, x, y, 7, 3, true);
@@ -3187,6 +3275,17 @@ impl Game for Jetpack {
                         c.line(26, ay, 24, ay + d * 2);
                     }
                 }
+            }
+        }
+        for b in &self.bullets {
+            c.line(b.0 as i32, b.1 as i32, b.0 as i32 + 3, b.1 as i32);
+        }
+        if !blink && !self.on_floor_mode() {
+            fr(c, 27, py + 6, 4, 2, true); // the gun in his hand
+            if self.gun_cd > 0.1 {
+                c.dot(32, py + 6, true);
+                c.dot(33, py + 5, true);
+                c.dot(33, py + 7, true);
             }
         }
         if self.shield > 0.0 && (self.shield > 2.0 || (self.clock / 120) % 2 == 0) {
@@ -3654,8 +3753,15 @@ impl Game for Subway {
         for l in 0..self.lives.max(0) {
             fr(c, 120 - l * 7, 1, 5, 5, true);
         }
-        // sky line and the tunnel walls
+        // skyline: outlined buildings with lit windows
+        for i in 0..14i32 {
+            let h = 4 + (i * 37 % 9) + (i % 3);
+            rc(c, i * 9 + 1, SW_HY - h, 8, h);
+            c.dot(i * 9 + 3, SW_HY - h + 2, true);
+            c.dot(i * 9 + 6, SW_HY - h + 4, true);
+        }
         fr(c, 0, SW_HY, 128, 1, true);
+        // the tunnel: wall lines, brick marks, and the three tracks with rails and sleepers
         for y in (SW_HY + 1)..=SW_NEAR {
             let tt = (y - SW_HY) as f32 / (SW_NEAR - SW_HY) as f32;
             let d = 10.0 * (1.0 / tt - 1.0);
@@ -3663,24 +3769,25 @@ impl Game for Subway {
             let hw = 3.0 + 56.0 * tt;
             let (l, r) = ((64.0 - hw) as i32, (64.0 + hw) as i32);
             c.dot(l, y, true);
+            c.dot(l - 1, y, true);
             c.dot(r, y, true);
-            // the three tracks: two rails each; sleepers on every other band
+            c.dot(r + 1, y, true);
+            if band == 0 {
+                c.dot(l - 4, y, true);
+                c.dot(r + 4, y, true);
+            }
             for lane in -1..=1 {
                 let cx = 64.0 + lane as f32 * hw * 0.62;
                 let rail = hw * 0.12;
-                c.dot((cx - rail) as i32, y, true);
-                c.dot((cx + rail) as i32, y, true);
-                if band == 0 {
-                    let (a, b) = ((cx - rail) as i32, (cx + rail) as i32);
-                    let mut x = a;
-                    while x <= b {
-                        c.dot(x, y, true);
-                        x += 2;
-                    }
+                let (a, b) = ((cx - rail) as i32, (cx + rail) as i32);
+                c.dot(a, y, true);
+                c.dot(b, y, true);
+                if band == 0 && b - a > 2 {
+                    c.dot((a + b) / 2, y, true); // sleeper
                 }
             }
         }
-        // objects, far ones first
+        // objects, far ones first; each one is cleared and outlined so it stands out from the tracks
         let mut order: Vec<usize> = (0..self.objs.len()).collect();
         order.sort_by(|a, b| self.objs[*b].d.partial_cmp(&self.objs[*a].d).unwrap_or(std::cmp::Ordering::Equal));
         for i in order {
@@ -3695,77 +3802,1069 @@ impl Game for Subway {
             let w = ((3.0 + 56.0 * tt) * 0.5) as i32;
             match o.kind {
                 3 => {
+                    // a round coin
                     let r = ((4.0 * tt) as i32).max(1);
-                    rc(c, cx - r, y - 2 * r - 1, 2 * r + 1, 2 * r + 1);
+                    fr(c, cx - r, y - 2 * r - 1, 2 * r + 1, 2 * r + 1, false);
+                    for dy in -r..=r {
+                        let hw2 = Canvas::dome_h(r, r, dy);
+                        c.dot(cx - hw2, y - r - 1 + dy, true);
+                        c.dot(cx + hw2, y - r - 1 + dy, true);
+                    }
+                    for dx in -r..=r {
+                        let hh2 = Canvas::dome_h(r, r, dx);
+                        c.dot(cx + dx, y - r - 1 - hh2, true);
+                        c.dot(cx + dx, y - r - 1 + hh2, true);
+                    }
+                    if r >= 2 {
+                        c.dot(cx, y - r - 1, true);
+                    }
                 }
                 0 => {
-                    let hh = ((9.0 * tt) as i32).max(2);
-                    fr(c, cx - w / 2, y - hh, w, hh, false);
-                    rc(c, cx - w / 2, y - hh, w, hh);
-                    fr(c, cx - w / 2, y - hh / 2, w, 1, true);
+                    // low barrier: striped like hazard tape, you jump it
+                    let hh = ((10.0 * tt) as i32).max(3);
+                    let (bx, by) = (cx - w / 2, y - hh);
+                    fr(c, bx - 1, by - 1, w + 2, hh + 2, false);
+                    rc(c, bx, by, w, hh);
+                    let mut k = by + 1;
+                    while k < by + hh - 1 {
+                        c.line(bx + 1, k, bx + w - 2, k);
+                        k += 2;
+                    }
+                    fr(c, bx, y, 2, 1, true);
+                    fr(c, bx + w - 2, y, 2, 1, true);
                 }
                 1 => {
-                    let (top, hh) = (y - ((26.0 * tt) as i32).max(4), ((4.0 * tt) as i32).max(2));
-                    fr(c, cx - w / 2, top, w, hh, true);
-                    fr(c, cx - w / 2, top, 1, ((26.0 * tt) as i32).max(4), true); // posts
-                    fr(c, cx + w / 2 - 1, top, 1, ((26.0 * tt) as i32).max(4), true);
+                    // overhead beam on two posts, you slide under it
+                    let ph = ((26.0 * tt) as i32).max(5);
+                    let top = y - ph;
+                    let th = ((5.0 * tt) as i32).max(2);
+                    fr(c, cx - w / 2 - 1, top - 1, w + 2, th + 2, false);
+                    rc(c, cx - w / 2, top, w, th + 1);
+                    let mut k = cx - w / 2 + 2;
+                    while k < cx + w / 2 - 1 {
+                        c.dot(k, top + th / 2, true);
+                        k += 3;
+                    }
+                    c.line(cx - w / 2, top + th, cx - w / 2, y);
+                    c.line(cx + w / 2, top + th, cx + w / 2, y);
                 }
                 _ => {
-                    // a train: front face, roof lines running back
-                    let hh = ((30.0 * tt) as i32).max(4);
+                    // a train: front face with windscreen and lamps, side walls and roof running away
+                    let hh = ((30.0 * tt) as i32).max(5);
                     let (back_t, back_y) = (Subway::t_of(dd + 10.0), Subway::row(dd + 10.0) as i32);
                     let (bw, bh) = (((3.0 + 56.0 * back_t) * 0.5) as i32, ((30.0 * back_t) as i32).max(2));
                     let bcx = Subway::x_of(o.lane as f32, back_t) as i32;
                     c.line(cx - w / 2, y - hh, bcx - bw / 2, back_y - bh);
                     c.line(cx + w / 2, y - hh, bcx + bw / 2, back_y - bh);
-                    fr(c, cx - w / 2, y - hh, w, hh, false);
-                    rc(c, cx - w / 2, y - hh, w, hh);
-                    fr(c, cx - w / 2 + 2, y - hh + 2, (w - 4).max(1), (hh / 3).max(1), true); // windscreen
+                    c.line(cx - w / 2, y, bcx - bw / 2, back_y);
+                    c.line(cx + w / 2, y, bcx + bw / 2, back_y);
+                    c.line(bcx - bw / 2, back_y - bh, bcx + bw / 2, back_y - bh);
+                    fr(c, cx - w / 2, y - hh, w + 1, hh + 1, false);
+                    rc(c, cx - w / 2, y - hh, w + 1, hh + 1);
+                    if w >= 6 {
+                        rc(c, cx - w / 2 + 2, y - hh + 2, w - 3, (hh / 3).max(2)); // windscreen
+                        c.dot(cx - w / 2 + 2, y - 3, true); // lamps
+                        c.dot(cx + w / 2 - 2, y - 3, true);
+                        c.line(cx - w / 2, y - hh / 2 + 1, cx + w / 2, y - hh / 2 + 1); // stripe
+                    }
                 }
             }
         }
-        // the runner
+        // the runner, with a clear outline and a shadow
         let blink = self.inv > 0.0 && (self.clock / 90) % 2 == 0;
         if !blink {
             let x = Subway::x_of(self.lane_x, 1.0) as i32;
             let h = (self.height() * 16.0) as i32;
             let base = 62 - h;
             if self.slide_t > 0.0 {
-                fr(c, x - 5, base - 4, 10, 3, true); // lying down
-                fr(c, x + 4, base - 6, 3, 3, true);
+                spr_halo(c, x - 6, base - 6, &RUNNER_SLIDE, false);
             } else {
-                let step = ((self.clock / 100) % 2) as i32;
-                fr(c, x - 1, base - 14, 4, 4, true); // head
-                fr(c, x - 2, base - 10, 6, 6, true); // body
-                if h > 0 {
-                    c.line(x - 2, base - 8, x - 5, base - 12);
-                    c.line(x + 3, base - 8, x + 6, base - 12);
-                    fr(c, x - 2, base - 4, 2, 3, true);
-                    fr(c, x + 2, base - 4, 2, 3, true);
-                } else {
-                    fr(c, x - 2, base - 4, 2, 4 - step, true);
-                    fr(c, x + 2, base - 4, 2, 3 + step, true);
-                    c.dot(x - 3 - step, base - 8, true);
-                    c.dot(x + 4 + step, base - 7, true);
-                }
+                let frame: &[&str; 13] = if h > 0 { &RUNNER_JUMP } else if (self.clock / 100) % 2 == 0 { &RUNNER_RUN1 } else { &RUNNER_RUN2 };
+                spr_halo(c, x - 4, base - 12, frame, false);
             }
-            if h > 0 {
-                c.dot(x, 63, true); // shadow
-                c.dot(x + 1, 63, true);
-            }
+            c.line(x - 4, 63, x + 4, 63);
         }
         // the guard who chases you after the first mistake
         if self.lives == 1 {
-            fr(c, 2, 50, 4, 4, true);
-            fr(c, 1, 54, 6, 6, true);
-            fr(c, 1, 60 - (self.clock as i32 / 100) % 2, 2, 3, true);
-            fr(c, 5, 60 + (self.clock as i32 / 100) % 2, 2, 3, true);
+            let step = (self.clock as i32 / 100) % 2;
+            spr_halo(c, 2, 49 + step, &RUNNER_RUN1, true);
         }
         if !self.alive {
             over_box(c, "CAUGHT!");
         }
     }
     fn score(&self) -> u32 { self.pos as u32 / 2 + self.coins * 5 }
+    fn over(&self) -> bool { !self.alive }
+    fn take_sound(&mut self) -> Option<Snd> { self.snd.take() }
+}
+
+const RUNNER_RUN1: [&str; 13] = [
+    "..###...", ".#####..", ".#.#.#..", ".#####..", "..###...", ".#####..", "#.###.#.", "#.###.#.", "..###...", "..#.#...", ".#...#..", ".#...#..", "##...##.",
+];
+const RUNNER_RUN2: [&str; 13] = [
+    "..###...", ".#####..", ".#.#.#..", ".#####..", "..###...", ".#####..", "#.###.#.", "#.###.#.", "..###...", ".#..#...", ".#...#..", "##...#..", "#....##.",
+];
+const RUNNER_JUMP: [&str; 13] = [
+    "..###...", ".#####..", ".#.#.#..", ".#####..", "#.###.#.", "#######.", "..###...", "..###...", "..###...", ".#####..", ".#...#..", "........", "........",
+];
+const RUNNER_SLIDE: [&str; 7] = [
+    "........##...", ".......####..", ".......#.##..", "##########...", "#.#######.##.", "..#.#...#....", "..#.#........",
+];
+
+// ---------------------------------------------------------------- 16 Ninja Run (platformer like Ninja Arashi)
+/// Draw a picture given as text rows ('#' = lit). `flip` mirrors it left to right.
+fn spr_str(c: &mut Canvas, x: i32, y: i32, rows: &[&str], flip: bool) {
+    for (r, row) in rows.iter().enumerate() {
+        let n = row.len() as i32;
+        for (i, ch) in row.bytes().enumerate() {
+            if ch == b'#' {
+                let col = if flip { n - 1 - i as i32 } else { i as i32 };
+                c.dot(x + col, y + r as i32, true);
+            }
+        }
+    }
+}
+
+/// Clear a box, then draw the picture: it stays readable on top of a busy background.
+fn spr_halo(c: &mut Canvas, x: i32, y: i32, rows: &[&str], flip: bool) {
+    let w = rows.iter().map(|r| r.len()).max().unwrap_or(0) as i32;
+    fr(c, x - 1, y - 1, w + 2, rows.len() as i32 + 2, false);
+    spr_str(c, x, y, rows, flip);
+}
+
+const NINJA_RUN1: [&str; 11] = [
+    "..###..", ".#####.", ".#.#.#.", "##.###.", "#..###.", "..####.", "..#.##.", "..#..#.", ".##..##", ".#....#", "##....#",
+];
+const NINJA_RUN2: [&str; 11] = [
+    "..###..", ".#####.", ".#.#.#.", "##.###.", "#..###.", "..####.", "..#.##.", "..###..", "..#.#..", "..#.#..", ".##.##.",
+];
+const NINJA_JUMP: [&str; 11] = [
+    "..###..", ".#####.", ".#.#.#.", "##.###.", "#.#####", "..####.", ".##.##.", ".#...#.", "##...##", "#.....#", ".......",
+];
+const SAMURAI: [&str; 11] = [
+    "..###..", ".#####.", "#######", ".#.#.#.", "..###..", ".#####.", "#.###.#", "#.###.#", "..#.#..", "..#.#..", ".##.##.",
+];
+
+const NJ_H: i32 = 11; // player height
+const NJ_W: i32 = 7;
+
+struct NEnt {
+    kind: u8, // 0 spike, 1 saw, 2 samurai, 3 orb, 4 flag
+    x: f32,   // world pixels
+    y: f32,
+    vx: f32,
+    lo: f32, // patrol / saw range
+    hi: f32,
+    alive: bool,
+}
+
+static NINJA_LEVEL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+pub struct Ninja {
+    ground: Vec<u8>,     // top row of the ground per tile column (8 = a hole)
+    plats: Vec<(i32, i32, i32)>, // floating platforms: (first tile, row, length)
+    ents: Vec<NEnt>,
+    px: f32,
+    py: f32,
+    vx: f32,
+    vy: f32,
+    face: i32,
+    on_ground: bool,
+    jumps: i32,
+    run: i32,
+    star: Option<(f32, f32, f32)>, // thrown shuriken: x, y, direction
+    star_cd: f32,
+    lives: i32,
+    inv: f32,
+    orbs: u32,
+    kills: u32,
+    level: usize,
+    check: f32, // x of the last checkpoint
+    won: bool,
+    alive: bool,
+    paused: bool,
+    last: Instant,
+    clock: u32,
+    snd: Option<Snd>,
+}
+
+impl Ninja {
+    pub fn new(t: &Trng) -> Self {
+        let level = NINJA_LEVEL.load(std::sync::atomic::Ordering::Relaxed) % 3;
+        let len = 100 + level * 30;
+        let mut ground: Vec<u8> = vec![6; len];
+        let mut plats = Vec::new();
+        let mut ents: Vec<NEnt> = Vec::new();
+        let mut x = 10usize;
+        let row = 6u8;
+        while x + 12 < len {
+            match rnd(t, 9) {
+                0 | 1 => {
+                    // a gap, two to four tiles wide
+                    let w = 2 + rnd(t, 2 + level as u32) as usize;
+                    for k in 0..w {
+                        ground[x + k] = 8;
+                    }
+                    if rnd(t, 2) == 0 {
+                        plats.push((x as i32, 4, w as i32));
+                    }
+                    x += w + 1;
+                }
+                2 => {
+                    // spikes on the floor
+                    let w = 1 + rnd(t, 2) as usize;
+                    for k in 0..w {
+                        ents.push(NEnt { kind: 0, x: ((x + k) * 8) as f32, y: (row as i32 * 8 - 4) as f32, vx: 0.0, lo: 0.0, hi: 0.0, alive: true });
+                    }
+                    x += w + 2;
+                }
+                3 => {
+                    // a step up or down
+                    x += 3;
+                }
+                4 => {
+                    // a samurai walking back and forth
+                    let w = 6 + rnd(t, 4) as usize;
+                    ents.push(NEnt { kind: 2, x: ((x + 2) * 8) as f32, y: (row as i32 * 8 - NJ_H) as f32, vx: -18.0, lo: (x * 8) as f32, hi: ((x + w) * 8) as f32, alive: true });
+                    x += w + 1;
+                }
+                5 if level > 0 => {
+                    // a saw blade sliding up and down
+                    ents.push(NEnt { kind: 1, x: (x * 8 + 4) as f32, y: 28.0, vx: 28.0, lo: 14.0, hi: row as f32 * 8.0 - 6.0, alive: true });
+                    x += 4;
+                }
+                6 => {
+                    // a floating platform with orbs
+                    plats.push((x as i32, 3, 3 + rnd(t, 3) as i32));
+                    for k in 0..3 {
+                        ents.push(NEnt { kind: 3, x: ((x + k) * 8 + 2) as f32, y: 20.0, vx: 0.0, lo: 0.0, hi: 0.0, alive: true });
+                    }
+                    x += 5;
+                }
+                _ => {
+                    // a few orbs in a row
+                    for k in 0..3 {
+                        ents.push(NEnt { kind: 3, x: ((x + k * 2) * 8 + 2) as f32, y: (row as i32 * 8 - 14) as f32, vx: 0.0, lo: 0.0, hi: 0.0, alive: true });
+                    }
+                    x += 6;
+                }
+            }
+        }
+        // the flag at the end, on solid ground
+        for g in ground.iter_mut().skip(len - 10) {
+            *g = 6;
+        }
+        ents.push(NEnt { kind: 4, x: ((len - 5) * 8) as f32, y: 48.0 - 16.0, vx: 0.0, lo: 0.0, hi: 0.0, alive: true });
+        Ninja {
+            ground,
+            plats,
+            ents,
+            px: 16.0,
+            py: 30.0,
+            vx: 0.0,
+            vy: 0.0,
+            face: 1,
+            on_ground: false,
+            jumps: 0,
+            run: 0,
+            star: None,
+            star_cd: 0.0,
+            lives: 3,
+            inv: 1.0,
+            orbs: 0,
+            kills: 0,
+            level,
+            check: 16.0,
+            won: false,
+            alive: true,
+            paused: false,
+            last: Instant::now(),
+            clock: 0,
+            snd: None,
+        }
+    }
+    fn ground_top(&self, col: i32) -> i32 {
+        if col >= 0 && (col as usize) < self.ground.len() && self.ground[col as usize] < 8 { self.ground[col as usize] as i32 * 8 } else { 200 }
+    }
+    /// The highest surface the feet can land on: ground or platform tops that are not already above the feet.
+    fn landing(&self, c0: i32, c1: i32, prev_feet: f32) -> Option<i32> {
+        let min_top = prev_feet as i32 - 3;
+        let mut best: Option<i32> = None;
+        for col in c0..=c1 {
+            let g = self.ground_top(col);
+            if g < 200 && g >= min_top {
+                best = Some(best.map_or(g, |b| b.min(g)));
+            }
+            for &(x0, row, len) in &self.plats {
+                let t = row * 8;
+                if col >= x0 && col < x0 + len && t >= min_top {
+                    best = Some(best.map_or(t, |b| b.min(t)));
+                }
+            }
+        }
+        best
+    }
+    fn hurt(&mut self) {
+        if self.inv > 0.0 {
+            return;
+        }
+        self.lives -= 1;
+        self.inv = 1.6;
+        self.vy = -150.0;
+        self.snd = Some(Snd::Crash);
+        if self.lives <= 0 {
+            self.alive = false;
+        }
+    }
+}
+
+impl Game for Ninja {
+    fn can_pause(&self) -> bool { true }
+    fn is_paused(&self) -> bool { self.paused }
+    fn set_paused(&mut self, p: bool) {
+        if self.alive && !self.won {
+            self.paused = p;
+            self.last = Instant::now();
+        }
+    }
+    fn press(&mut self, b: Btn, _t: &Trng) -> bool {
+        if self.paused {
+            if b == Btn::Ok {
+                self.set_paused(false);
+            }
+            return true;
+        }
+        if self.won || !self.alive {
+            return false;
+        }
+        match b {
+            Btn::Up => {
+                if self.on_ground || self.jumps < 2 {
+                    self.vy = if self.on_ground { -215.0 } else { -185.0 };
+                    self.jumps = if self.on_ground { 1 } else { 2 };
+                    self.on_ground = false;
+                    self.snd = Some(Snd::Tick);
+                }
+                true
+            }
+            Btn::Ok => {
+                if self.star.is_none() && self.star_cd <= 0.0 {
+                    self.star = Some((self.px + 3.0, self.py + 4.0, self.face as f32));
+                    self.star_cd = 0.3;
+                    self.snd = Some(Snd::Click);
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+    fn held(&mut self, down: &[bool; 6]) {
+        self.run = (down[4] as i32) - (down[3] as i32);
+        if self.run != 0 {
+            self.face = self.run;
+        }
+    }
+    fn update(&mut self, _t: &Trng) -> bool {
+        if !self.alive || self.paused || self.won {
+            return false;
+        }
+        let dt = (dt_ms(&mut self.last) as f32 / 1000.0).min(0.05);
+        self.clock += (dt * 1000.0) as u32;
+        self.inv = (self.inv - dt).max(0.0);
+        self.star_cd = (self.star_cd - dt).max(0.0);
+        // horizontal: run with the left / right keys
+        let nx = (self.px + self.run as f32 * 72.0 * dt).max(0.0);
+        let feet = (self.py + NJ_H as f32) as i32;
+        let lead = if self.run > 0 { (nx + NJ_W as f32 - 1.0) as i32 / 8 } else { nx as i32 / 8 };
+        if self.run == 0 || self.ground_top(lead) >= feet - 3 {
+            self.px = nx;
+        }
+        // vertical
+        let prev_feet = self.py + NJ_H as f32;
+        self.vy = (self.vy + 650.0 * dt).min(300.0);
+        self.py += self.vy * dt;
+        self.on_ground = false;
+        let (c0, c1) = (self.px as i32 / 8, (self.px + NJ_W as f32 - 1.0) as i32 / 8);
+        let feet_now = self.py + NJ_H as f32;
+        if self.vy >= 0.0 {
+            if let Some(top) = self.landing(c0, c1, prev_feet) {
+                if feet_now >= top as f32 {
+                    self.py = top as f32 - NJ_H as f32;
+                    self.vy = 0.0;
+                    self.on_ground = true;
+                    self.jumps = 0;
+                }
+            }
+        }
+        // falling into a hole costs a life
+        if self.py > 90.0 {
+            self.lives -= 1;
+            self.snd = Some(Snd::Crash);
+            if self.lives <= 0 {
+                self.alive = false;
+            } else {
+                self.px = self.check;
+                self.py = 20.0;
+                self.vy = 0.0;
+                self.inv = 1.5;
+            }
+        }
+        // checkpoint every 40 tiles of solid ground
+        let tile = self.px as i32 / 8;
+        if self.on_ground && tile % 40 == 20 && (self.px - self.check) > 100.0 {
+            self.check = self.px;
+        }
+        // shuriken
+        if let Some((sx, sy, d)) = self.star {
+            let nx = sx + d * 200.0 * dt;
+            let mut gone = nx < self.px - 70.0 || nx > self.px + 140.0;
+            for e in self.ents.iter_mut() {
+                if e.alive && e.kind == 2 && (nx - e.x - 3.0).abs() < 6.0 && (sy - e.y - 5.0).abs() < 7.0 {
+                    e.alive = false;
+                    self.kills += 1;
+                    gone = true;
+                    self.snd = Some(Snd::Coin);
+                }
+            }
+            self.star = if gone { None } else { Some((nx, sy, d)) };
+        }
+        // things in the world
+        let (px, py) = (self.px, self.py);
+        let stomp = self.vy > 30.0;
+        let mut hit = false;
+        let mut win = false;
+        let mut bounce = false;
+        for e in self.ents.iter_mut() {
+            if !e.alive {
+                continue;
+            }
+            match e.kind {
+                1 => {
+                    e.y += e.vx * dt;
+                    if e.y < e.lo || e.y > e.hi {
+                        e.vx = -e.vx;
+                        e.y = e.y.clamp(e.lo, e.hi);
+                    }
+                }
+                2 => {
+                    e.x += e.vx * dt;
+                    if e.x < e.lo || e.x > e.hi {
+                        e.vx = -e.vx;
+                    }
+                }
+                _ => {}
+            }
+            let (ex, ey) = (e.x, e.y);
+            let near = (ex - px).abs() < 12.0;
+            if !near {
+                continue;
+            }
+            match e.kind {
+                0 => {
+                    if px + (NJ_W as f32) > ex + 1.0 && px < ex + 7.0 && py + NJ_H as f32 > ey + 1.0 {
+                        hit = true;
+                    }
+                }
+                1 => {
+                    let (dx, dy) = (px + 3.0 - ex, py + 5.0 - ey);
+                    if dx * dx + dy * dy < 50.0 {
+                        hit = true;
+                    }
+                }
+                2 => {
+                    if px + (NJ_W as f32) > ex + 1.0 && px < ex + 6.0 && py + NJ_H as f32 > ey && py < ey + NJ_H as f32 {
+                        if stomp && py + (NJ_H as f32) < ey + 7.0 {
+                            e.alive = false;
+                            self.kills += 1;
+                            bounce = true;
+                            self.snd = Some(Snd::Coin);
+                        } else {
+                            hit = true;
+                        }
+                    }
+                }
+                3 => {
+                    if px + (NJ_W as f32) > ex && px < ex + 6.0 && py + NJ_H as f32 > ey && py < ey + 6.0 {
+                        e.alive = false;
+                        self.orbs += 1;
+                        self.snd = Some(Snd::Coin);
+                    }
+                }
+                _ => {
+                    if px + (NJ_W as f32) > ex {
+                        win = true;
+                    }
+                }
+            }
+        }
+        if bounce {
+            self.vy = -140.0;
+        }
+        if hit {
+            self.hurt();
+        }
+        if win {
+            self.won = true;
+            NINJA_LEVEL.store((self.level + 1) % 3, std::sync::atomic::Ordering::Relaxed);
+            self.snd = Some(Snd::Coin);
+        }
+        true
+    }
+    fn draw(&self, c: &mut Canvas, _best: u32) {
+        let cam = (self.px - 44.0).clamp(0.0, ((self.ground.len() * 8) as f32 - 128.0).max(0.0)) as i32;
+        txt(c, 0, 0, &format!("L{} {}o {}k", self.level + 1, self.orbs, self.kills));
+        for l in 0..self.lives.max(0) {
+            fr(c, 120 - l * 7, 1, 5, 5, true);
+        }
+        // moon and far mountains (they move slower than the world)
+        let moon_x = 100 - (cam / 12) % 160;
+        if moon_x > -10 {
+            for dy in -4..=4 {
+                let w = Canvas::dome_h(4, 4, dy);
+                c.dot(moon_x - w, 14 + dy, true);
+                c.dot(moon_x + w, 14 + dy, true);
+            }
+        }
+        let mut x = 0;
+        while x < 128 {
+            let wx = x + cam / 3;
+            let h = 4 + ((wx / 9) * 5 % 7);
+            c.dot(x, 42 - h, true);
+            x += 3;
+        }
+        // ground and platforms
+        let first = cam / 8;
+        for col in first..first + 17 {
+            let sx = col * 8 - cam;
+            let top = if col >= 0 && (col as usize) < self.ground.len() { self.ground[col as usize] as i32 * 8 } else { 200 };
+            if top < 64 {
+                fr(c, sx, top, 8, 1, true);
+                c.dot(sx + 2, top - 1, true); // a tuft of grass
+                for yy in (top + 2)..64 {
+                    let mut xx = sx + ((yy / 2) % 2) * 2;
+                    while xx < sx + 8 {
+                        c.dot(xx, yy, true);
+                        xx += 4;
+                    }
+                }
+            }
+        }
+        for &(x0, row, len) in &self.plats {
+            let sx = x0 * 8 - cam;
+            if sx > -len * 8 && sx < 128 {
+                fr(c, sx, row * 8, len * 8, 3, false);
+                rc(c, sx, row * 8, len * 8, 3);
+            }
+        }
+        // spikes, saws, samurai, orbs, flag
+        for e in &self.ents {
+            if !e.alive {
+                continue;
+            }
+            let sx = e.x as i32 - cam;
+            if sx < -12 || sx > 130 {
+                continue;
+            }
+            let sy = e.y as i32;
+            match e.kind {
+                0 => {
+                    c.line(sx, sy + 4, sx + 3, sy);
+                    c.line(sx + 3, sy, sx + 7, sy + 4);
+                    c.line(sx, sy + 4, sx + 7, sy + 4);
+                }
+                1 => {
+                    let spin = (self.clock / 40) as i32 % 4;
+                    for dy in -4..=4 {
+                        let w = Canvas::dome_h(4, 4, dy);
+                        c.dot(sx - w, sy + dy, true);
+                        c.dot(sx + w, sy + dy, true);
+                    }
+                    c.line(sx - 4 + spin, sy - 4 + spin, sx + 4 - spin, sy + 4 - spin);
+                    c.line(sx + 4 - spin, sy - 4 + spin, sx - 4 + spin, sy + 4 - spin);
+                }
+                2 => spr_halo(c, sx, sy, &SAMURAI, e.vx > 0.0),
+                3 => {
+                    c.line(sx + 1, sy, sx + 4, sy);
+                    c.line(sx + 1, sy + 5, sx + 4, sy + 5);
+                    c.line(sx, sy + 1, sx, sy + 4);
+                    c.line(sx + 5, sy + 1, sx + 5, sy + 4);
+                    c.dot(sx + 2, sy + 2, true);
+                    c.dot(sx + 3, sy + 3, true);
+                }
+                _ => {
+                    fr(c, sx, sy, 1, 18, true);
+                    fr(c, sx + 1, sy, 8, 5, true);
+                    c.dot(sx + 9, sy + 2 + (self.clock as i32 / 150) % 2, true);
+                }
+            }
+        }
+        if let Some((sx, sy, _)) = self.star {
+            let x = sx as i32 - cam;
+            c.line(x - 2, sy as i32, x + 2, sy as i32);
+            c.line(x, sy as i32 - 2, x, sy as i32 + 2);
+        }
+        // the ninja
+        let blink = self.inv > 0.0 && (self.clock / 80) % 2 == 0;
+        if !blink {
+            let frame: &[&str; 11] = if !self.on_ground { &NINJA_JUMP } else if self.run != 0 && (self.clock / 110) % 2 == 0 { &NINJA_RUN1 } else if self.run != 0 { &NINJA_RUN2 } else { &NINJA_RUN2 };
+            spr_halo(c, self.px as i32 - cam, self.py as i32, frame, self.face < 0);
+        }
+        if self.won {
+            over_box2(c, "LEVEL DONE", if self.level == 2 { "OK = level 1 again" } else { "OK = next level" });
+        } else if !self.alive {
+            over_box(c, "DEFEATED");
+        }
+    }
+    fn score(&self) -> u32 { self.orbs * 10 + self.kills * 25 + if self.won { 100 } else { 0 } }
+    fn over(&self) -> bool { self.won || !self.alive }
+    fn take_sound(&mut self) -> Option<Snd> { self.snd.take() }
+}
+
+// ---------------------------------------------------------------- 17 Star Drifter (3D space, endless world)
+// An endless universe made of 700-unit sectors. Every sector holds planets, suns or asteroid rocks that are worked
+// out from the sector's coordinates (no memory needed), so the world never ends and always looks the same when you
+// come back. Other ships spawn around you: shoot them down, they shoot back.
+const SD_FOCAL: f32 = 74.0;
+const SD_SECTOR: f32 = 700.0;
+
+fn sd_hash(a: i32, b: i32, c: i32, k: u32) -> u32 {
+    let mut x = (a as u32).wrapping_mul(0x9E37_79B1) ^ (b as u32).wrapping_mul(0x85EB_CA6B) ^ (c as u32).wrapping_mul(0xC2B2_AE35) ^ k.wrapping_mul(0x27D4_EB2F);
+    x ^= x >> 15;
+    x = x.wrapping_mul(0x2C1B_3C6D);
+    x ^= x >> 12;
+    x = x.wrapping_mul(0x297A_2D39);
+    x ^ (x >> 15)
+}
+
+struct Body {
+    x: f32,
+    y: f32,
+    z: f32,
+    r: f32,
+    kind: u8, // 0 planet, 1 sun, 2 ringed planet, 3 rock
+}
+
+struct Foe {
+    p: [f32; 3],
+    v: [f32; 3],
+    hp: i32,
+    fire_cd: f32,
+    flash: f32,
+}
+
+pub struct Drifter {
+    pos: [f32; 3],
+    yaw: f32,
+    pitch: f32,
+    turn: f32,   // -1, 0, 1
+    climb: f32,  // -1, 0, 1
+    firing: bool,
+    fire_cd: f32,
+    laser: f32,  // time the beam stays visible
+    shield: i32,
+    inv: f32,
+    kills: u32,
+    foes: Vec<Foe>,
+    booms: Vec<([f32; 3], f32)>,
+    spawn_in: f32,
+    rng: u32,
+    alive: bool,
+    paused: bool,
+    last: Instant,
+    clock: u32,
+    snd: Option<Snd>,
+}
+
+impl Drifter {
+    pub fn new(t: &Trng) -> Self {
+        Drifter {
+            pos: [(rnd(t, 5000) as f32) - 2500.0, (rnd(t, 800) as f32) - 400.0, (rnd(t, 5000) as f32) - 2500.0],
+            yaw: 0.0,
+            pitch: 0.0,
+            turn: 0.0,
+            climb: 0.0,
+            firing: false,
+            fire_cd: 0.0,
+            laser: 0.0,
+            shield: 6,
+            inv: 0.0,
+            kills: 0,
+            foes: Vec::new(),
+            booms: Vec::new(),
+            spawn_in: 2.0,
+            rng: rnd(t, 1 << 30) | 1,
+            alive: true,
+            paused: false,
+            last: Instant::now(),
+            clock: 0,
+            snd: None,
+        }
+    }
+    fn rand(&mut self) -> f32 {
+        self.rng ^= self.rng << 13;
+        self.rng ^= self.rng >> 17;
+        self.rng ^= self.rng << 5;
+        (self.rng >> 8) as f32 / 16_777_216.0
+    }
+    fn basis(&self) -> ([f32; 3], [f32; 3], [f32; 3]) {
+        let (sy, cy, sp, cp) = (self.yaw.sin(), self.yaw.cos(), self.pitch.sin(), self.pitch.cos());
+        let fwd = [sy * cp, sp, cy * cp];
+        let right = [cy, 0.0, -sy];
+        let up = [-sy * sp, cp, -cy * sp];
+        (right, up, fwd)
+    }
+    /// World point -> (camera x, y, z).
+    fn to_cam(&self, p: [f32; 3], b: &([f32; 3], [f32; 3], [f32; 3])) -> (f32, f32, f32) {
+        let r = [p[0] - self.pos[0], p[1] - self.pos[1], p[2] - self.pos[2]];
+        let d = |a: &[f32; 3]| r[0] * a[0] + r[1] * a[1] + r[2] * a[2];
+        (d(&b.0), d(&b.1), d(&b.2))
+    }
+    fn bodies(&self) -> Vec<Body> {
+        let (sx, sy, sz) = ((self.pos[0] / SD_SECTOR).floor() as i32, (self.pos[1] / SD_SECTOR).floor() as i32, (self.pos[2] / SD_SECTOR).floor() as i32);
+        let mut v = Vec::new();
+        for a in -1..=1 {
+            for b in -1..=1 {
+                for c in -1..=1 {
+                    let (ix, iy, iz) = (sx + a, sy + b, sz + c);
+                    let h = sd_hash(ix, iy, iz, 1);
+                    // about two sectors in three hold something
+                    if h % 3 == 0 {
+                        continue;
+                    }
+                    let f = |k: u32| (sd_hash(ix, iy, iz, k) % 1000) as f32 / 1000.0;
+                    let kind = match h % 10 {
+                        0..=3 => 0,
+                        4..=5 => 2,
+                        6 => 1,
+                        _ => 3,
+                    };
+                    let r = match kind {
+                        1 => 90.0 + f(5) * 60.0,
+                        3 => 10.0 + f(5) * 14.0,
+                        _ => 40.0 + f(5) * 50.0,
+                    };
+                    let (bx, by, bz) = ((ix as f32 + 0.15 + f(2) * 0.7) * SD_SECTOR, (iy as f32 + 0.15 + f(3) * 0.7) * SD_SECTOR, (iz as f32 + 0.15 + f(4) * 0.7) * SD_SECTOR);
+                    v.push(Body { x: bx, y: by, z: bz, r, kind });
+                    if kind == 3 {
+                        // rocks come in groups
+                        for k in 0..4u32 {
+                            let g = |q: u32| (sd_hash(ix, iy, iz, 20 + k * 7 + q) % 1000) as f32 / 1000.0 - 0.5;
+                            v.push(Body { x: bx + g(1) * 120.0, y: by + g(2) * 120.0, z: bz + g(3) * 120.0, r: 6.0 + g(4).abs() * 14.0, kind: 3 });
+                        }
+                    }
+                }
+            }
+        }
+        v
+    }
+}
+
+fn sd_circle(c: &mut Canvas, cx: i32, cy: i32, r: i32) {
+    let r = r.clamp(1, 60);
+    for d in -r..=r {
+        let h = Canvas::dome_h(r, r, d);
+        c.dot(cx + d, cy - h, true);
+        c.dot(cx + d, cy + h, true);
+        c.dot(cx - h, cy + d, true);
+        c.dot(cx + h, cy + d, true);
+    }
+}
+
+impl Game for Drifter {
+    fn can_pause(&self) -> bool { true }
+    fn is_paused(&self) -> bool { self.paused }
+    fn set_paused(&mut self, p: bool) {
+        if self.alive {
+            self.paused = p;
+            self.last = Instant::now();
+        }
+    }
+    fn press(&mut self, b: Btn, _t: &Trng) -> bool {
+        if self.paused {
+            if b == Btn::Ok {
+                self.set_paused(false);
+            }
+            return true;
+        }
+        false
+    }
+    fn held(&mut self, down: &[bool; 6]) {
+        self.turn = (down[4] as i32 - down[3] as i32) as f32;
+        self.climb = (down[1] as i32 - down[2] as i32) as f32;
+        self.firing = down[0];
+    }
+    fn update(&mut self, t: &Trng) -> bool {
+        if !self.alive || self.paused {
+            return false;
+        }
+        let _ = t;
+        let dt = (dt_ms(&mut self.last) as f32 / 1000.0).min(0.06);
+        self.clock += (dt * 1000.0) as u32;
+        self.yaw += self.turn * 1.3 * dt;
+        self.pitch = (self.pitch + self.climb * 0.9 * dt).clamp(-1.2, 1.2);
+        let b = self.basis();
+        let speed = 95.0;
+        for i in 0..3 {
+            self.pos[i] += b.2[i] * speed * dt;
+        }
+        self.inv = (self.inv - dt).max(0.0);
+        self.fire_cd = (self.fire_cd - dt).max(0.0);
+        self.laser = (self.laser - dt).max(0.0);
+        // planets and suns are solid: scrape one and you bounce off with a damaged shield
+        for body in self.bodies() {
+            if body.kind == 3 && body.r < 12.0 {
+                continue;
+            }
+            let d = [self.pos[0] - body.x, self.pos[1] - body.y, self.pos[2] - body.z];
+            let dist = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+            let rad = body.r + 6.0;
+            if dist < rad && dist > 0.1 {
+                for i in 0..3 {
+                    self.pos[i] = body.x + d[i] / dist * (rad + 2.0);
+                }
+                if self.inv <= 0.0 {
+                    self.shield -= if body.kind == 1 { 2 } else { 1 };
+                    self.inv = 1.0;
+                    self.snd = Some(Snd::Crash);
+                }
+            }
+        }
+        // other ships appear ahead of and around you
+        self.spawn_in -= dt;
+        if self.spawn_in <= 0.0 && self.foes.len() < 4 {
+            self.spawn_in = 4.0 + self.rand() * 5.0;
+            let (rx, ry, rz) = (self.rand() - 0.5, (self.rand() - 0.5) * 0.4, self.rand() * 0.8 + 0.2);
+            let dist = 380.0 + self.rand() * 160.0;
+            let dir = [b.0[0] * rx * 1.6 + b.1[0] * ry + b.2[0] * rz, b.0[1] * rx * 1.6 + b.1[1] * ry + b.2[1] * rz, b.0[2] * rx * 1.6 + b.1[2] * ry + b.2[2] * rz];
+            let n = (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]).sqrt().max(0.01);
+            let p = [self.pos[0] + dir[0] / n * dist, self.pos[1] + dir[1] / n * dist, self.pos[2] + dir[2] / n * dist];
+            let cd = 2.0 + self.rand() * 2.0;
+            self.foes.push(Foe { p, v: [0.0; 3], hp: 2, fire_cd: cd, flash: 0.0 });
+        }
+        // the foes: close in, circle around you, shoot
+        let me = self.pos;
+        let mut hits = 0;
+        let mut r1 = self.rand();
+        for f in self.foes.iter_mut() {
+            let d = [me[0] - f.p[0], me[1] - f.p[1], me[2] - f.p[2]];
+            let dist = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt().max(1.0);
+            let want = if dist > 170.0 { 1.0 } else { -0.2 };
+            let side = [-d[2] / dist, 0.0, d[0] / dist]; // strafe sideways
+            for i in 0..3 {
+                let target = d[i] / dist * 70.0 * want + side[i] * 45.0;
+                f.v[i] += (target - f.v[i]) * dt * 1.5;
+                f.p[i] += f.v[i] * dt;
+            }
+            f.fire_cd -= dt;
+            f.flash = (f.flash - dt).max(0.0);
+            if f.fire_cd <= 0.0 && dist < 260.0 {
+                f.fire_cd = 1.8 + r1 * 1.5;
+                r1 = (r1 * 7.31 + 0.17).fract();
+                f.flash = 0.15;
+                if r1 < 0.4 {
+                    hits += 1;
+                }
+            }
+        }
+        if hits > 0 && self.inv <= 0.0 {
+            self.shield -= hits;
+            self.inv = 0.5;
+            self.snd = Some(Snd::Crash);
+        }
+        // your laser
+        if self.firing && self.fire_cd <= 0.0 {
+            self.fire_cd = 0.18;
+            self.laser = 0.08;
+            self.snd = Some(Snd::Tick);
+            let fwd = b.2;
+            let mut hit: Option<usize> = None;
+            let mut best = 1e9f32;
+            for (i, f) in self.foes.iter().enumerate() {
+                let r = [f.p[0] - me[0], f.p[1] - me[1], f.p[2] - me[2]];
+                let along = r[0] * fwd[0] + r[1] * fwd[1] + r[2] * fwd[2];
+                if along > 5.0 && along < 900.0 {
+                    let perp2 = r[0] * r[0] + r[1] * r[1] + r[2] * r[2] - along * along;
+                    if perp2 < 18.0 * 18.0 && along < best {
+                        best = along;
+                        hit = Some(i);
+                    }
+                }
+            }
+            if let Some(i) = hit {
+                self.foes[i].hp -= 1;
+                self.foes[i].flash = 0.2;
+                if self.foes[i].hp <= 0 {
+                    let p = self.foes[i].p;
+                    self.foes.swap_remove(i);
+                    self.booms.push((p, 0.0));
+                    self.kills += 1;
+                    self.snd = Some(Snd::Coin);
+                }
+            }
+        }
+        for bm in self.booms.iter_mut() {
+            bm.1 += dt;
+        }
+        self.booms.retain(|b| b.1 < 0.9);
+        // foes that fall far behind are dropped
+        self.foes.retain(|f| {
+            let d = [f.p[0] - me[0], f.p[1] - me[1], f.p[2] - me[2]];
+            d[0] * d[0] + d[1] * d[1] + d[2] * d[2] < 1500.0 * 1500.0
+        });
+        if self.shield <= 0 {
+            self.alive = false;
+            self.snd = Some(Snd::Crash);
+        }
+        true
+    }
+    fn draw(&self, c: &mut Canvas, _best: u32) {
+        let b = self.basis();
+        // distant stars: directions that turn with the ship
+        for i in 0..40u32 {
+            let h = sd_hash(i as i32, 7, 9, 3);
+            let (a, e) = ((h % 6283) as f32 / 1000.0, ((h >> 12) % 3000) as f32 / 1000.0 - 1.5);
+            let dir = [a.sin() * e.cos(), e.sin(), a.cos() * e.cos()];
+            let x = dir[0] * b.0[0] + dir[1] * b.0[1] + dir[2] * b.0[2];
+            let y = dir[0] * b.1[0] + dir[1] * b.1[1] + dir[2] * b.1[2];
+            let z = dir[0] * b.2[0] + dir[1] * b.2[1] + dir[2] * b.2[2];
+            if z > 0.15 {
+                c.dot(64 + (x / z * SD_FOCAL) as i32, 32 - (y / z * SD_FOCAL * 0.8) as i32, true);
+            }
+        }
+        // planets, suns, rocks (far ones first)
+        let mut list: Vec<(f32, i32, i32, i32, u8)> = Vec::new();
+        for body in self.bodies() {
+            let (x, y, z) = self.to_cam([body.x, body.y, body.z], &b);
+            if z > 4.0 && z < 2200.0 {
+                let sx = 64 + (x / z * SD_FOCAL) as i32;
+                let sy = 32 - (y / z * SD_FOCAL * 0.8) as i32;
+                let r = (body.r / z * SD_FOCAL) as i32;
+                if sx > -r - 4 && sx < 132 + r && sy > -r - 4 && sy < 68 + r && r >= 1 {
+                    list.push((z, sx, sy, r, body.kind));
+                }
+            }
+        }
+        list.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        for (_, sx, sy, r, kind) in list {
+            let r = r.min(70);
+            match kind {
+                1 => {
+                    // a sun: bright disc with rays
+                    for dy in -r..=r {
+                        let w = Canvas::dome_h(r, r, dy);
+                        fr(c, sx - w, sy + dy, 2 * w + 1, 1, true);
+                    }
+                    if r > 3 {
+                        for k in 0..8 {
+                            let a = k as f32 * 0.785 + self.clock as f32 / 900.0;
+                            c.line(sx + (a.cos() * (r + 2) as f32) as i32, sy + (a.sin() * (r + 2) as f32) as i32, sx + (a.cos() * (r + 5) as f32) as i32, sy + (a.sin() * (r + 5) as f32) as i32);
+                        }
+                    }
+                }
+                3 => {
+                    sd_circle(c, sx, sy, r.max(1));
+                    if r >= 3 {
+                        c.dot(sx - r / 3, sy - r / 3, true);
+                    }
+                }
+                _ => {
+                    // a planet: outline, a few bands, a dark side
+                    fr(c, sx - r, sy - r, 2 * r + 1, 2 * r + 1, false);
+                    sd_circle(c, sx, sy, r);
+                    if r >= 4 {
+                        for dy in (-r + 2..r).step_by(3) {
+                            let w = Canvas::dome_h(r, r, dy);
+                            c.line(sx - w + 1, sy + dy, sx + w - 1, sy + dy);
+                        }
+                        for dy in -r..=r {
+                            let w = Canvas::dome_h(r, r, dy);
+                            for xx in (sx + w / 3)..=(sx + w) {
+                                if (xx + sy + dy) % 2 == 0 {
+                                    c.dot(xx, sy + dy, true);
+                                }
+                            }
+                        }
+                    }
+                    if kind == 2 {
+                        let ry = (r / 4).max(1);
+                        for k in 0..40 {
+                            let a = k as f32 * 0.157;
+                            c.dot(sx + (a.cos() * (r as f32 * 1.7)) as i32, sy + (a.sin() * ry as f32) as i32, true);
+                        }
+                    }
+                }
+            }
+        }
+        // other ships
+        for f in &self.foes {
+            let (x, y, z) = self.to_cam(f.p, &b);
+            if z < 3.0 {
+                continue;
+            }
+            let sx = 64 + (x / z * SD_FOCAL) as i32;
+            let sy = 32 - (y / z * SD_FOCAL * 0.8) as i32;
+            let s = ((14.0 / z * SD_FOCAL) as i32).clamp(2, 40);
+            fr(c, sx - s, sy - s / 2 - 1, 2 * s + 1, s + 3, false);
+            c.line(sx - s, sy + s / 3, sx, sy - s / 3); // left wing
+            c.line(sx + s, sy + s / 3, sx, sy - s / 3); // right wing
+            c.line(sx - s, sy + s / 3, sx + s, sy + s / 3);
+            c.line(sx, sy - s / 2, sx, sy + s / 2); // body
+            if f.flash > 0.0 {
+                c.line(sx, sy, 64, 32);
+                c.invert_rect((sx - s).max(0) as usize, (sy - s / 2).max(0) as usize, (2 * s) as usize, s as usize);
+            }
+        }
+        // explosions
+        for (p, age) in &self.booms {
+            let (x, y, z) = self.to_cam(*p, &b);
+            if z > 3.0 {
+                let sx = 64 + (x / z * SD_FOCAL) as i32;
+                let sy = 32 - (y / z * SD_FOCAL * 0.8) as i32;
+                let r = ((age * 40.0 + 2.0) * 14.0 / z * 8.0) as i32;
+                for k in 0..10 {
+                    let a = k as f32 * 0.628 + age * 2.0;
+                    c.dot(sx + (a.cos() * r as f32) as i32, sy + (a.sin() * r as f32) as i32, true);
+                    c.dot(sx + (a.cos() * r as f32 * 0.6) as i32, sy + (a.sin() * r as f32 * 0.6) as i32, true);
+                }
+            }
+        }
+        // laser beam and cockpit
+        if self.laser > 0.0 {
+            c.line(30, 63, 62, 33);
+            c.line(98, 63, 66, 33);
+        }
+        c.dot(64, 32, true);
+        c.dot(60, 32, true);
+        c.dot(68, 32, true);
+        c.dot(64, 28, true);
+        c.dot(64, 36, true);
+        // heads-up display: shield, kills, sector, radar
+        for i in 0..self.shield.max(0) {
+            fr(c, 1 + i * 5, 0, 4, 4, true);
+        }
+        txt(c, 0, 5, &format!("{} kills", self.kills));
+        let sec = |v: f32| (v / SD_SECTOR).floor() as i32;
+        let line = format!("{},{},{}", sec(self.pos[0]), sec(self.pos[1]), sec(self.pos[2]));
+        txt(c, (128 - 6 * line.len() as i32).max(0), 56, &line);
+        // radar: top right, you in the middle, ships as dots (forward = up)
+        let (rx, ry) = (112, 12);
+        sd_circle(c, rx, ry, 10);
+        c.dot(rx, ry, true);
+        for f in &self.foes {
+            let (x, _y, z) = self.to_cam(f.p, &b);
+            let d = (x * x + z * z).sqrt().max(1.0);
+            let k = (d / 600.0).min(1.0) * 9.0;
+            c.dot(rx + (x / d * k) as i32, ry - (z / d * k) as i32, true);
+            c.dot(rx + (x / d * k) as i32 + 1, ry - (z / d * k) as i32, true);
+        }
+        if self.inv > 0.0 && (self.clock / 80) % 2 == 0 {
+            c.invert_rect(0, 0, 128, 64);
+        }
+        if !self.alive {
+            over_box(c, "SHIP LOST");
+        }
+    }
+    fn score(&self) -> u32 { self.kills * 100 }
     fn over(&self) -> bool { !self.alive }
     fn take_sound(&mut self) -> Option<Snd> { self.snd.take() }
 }

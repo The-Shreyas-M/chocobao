@@ -107,7 +107,7 @@ static UTIL_ITEMS: [Item; 17] = [
     it("Text presets", &I_WORDS, "Hold OK types a text"),
     it("Flashlight", &I_INFO, "White screen, strobe"),
 ];
-static GAME_ITEMS: [Item; 22] = [
+static GAME_ITEMS: [Item; 24] = [
     it("Mempool Dodger", &I_DODGER, "Dodge blocks, grab coins"),
     it("Snake", &I_SNAKE, "Eat, grow, don't crash"),
     it("Pong", &I_PONG, "You vs the computer"),
@@ -130,11 +130,15 @@ static GAME_ITEMS: [Item; 22] = [
     it(crate::games2::NAMES[10], &crate::games2::ICONS[10], crate::games2::DESCS[10]),
     it(crate::games2::NAMES[11], &crate::games2::ICONS[11], crate::games2::DESCS[11]),
     it(crate::games2::NAMES[12], &crate::games2::ICONS[12], crate::games2::DESCS[12]),
+    it(crate::games2::NAMES[13], &crate::games2::ICONS[13], crate::games2::DESCS[13]),
+    it(crate::games2::NAMES[14], &crate::games2::ICONS[14], crate::games2::DESCS[14]),
 ];
-static MUSIC_ITEMS: [Item; 4] = [
+static MUSIC_ITEMS: [Item; 6] = [
     it("Closer", &I_SPEAKER, "The Chainsmokers"),
     it("Blinding Lights", &I_SPEAKER, "The Weeknd"),
     it("Attention", &I_SPEAKER, "Charlie Puth"),
+    it("Heavenly Jumpstyle", &I_SPEAKER, "Heavenly"),
+    it("AURA", &I_SPEAKER, "Ogryzek"),
     it("Metronome", &I_HOURGLASS, "Tempo clicks, beats"),
 ];
 static LAB_ITEMS: [Item; 5] = [
@@ -191,9 +195,9 @@ const H_SEED: usize = 17;
 const H_MANDEL: usize = 18;
 const H_CLOCK: usize = 19;
 const H_PLAYER: usize = 21;
-const H_GAME2: usize = 22; // 13 more games: 22..=34
-const H_TOOL0: usize = 35; // 13 tools: 35..=47
-const HELP_COUNT: usize = 48;
+const H_GAME2: usize = 22; // 15 more games: 22..=36
+const H_TOOL0: usize = 37; // 13 tools: 37..=49
+const HELP_COUNT: usize = 50;
 
 fn help_text(id: usize) -> (&'static str, [&'static str; 4]) {
     match id {
@@ -1107,12 +1111,12 @@ impl App {
             (MenuId::Utilities, 14) => self.open_tool(crate::tools2::Kind::Morse),
             (MenuId::Utilities, 15) => self.open_tool(crate::tools2::Kind::Typer),
             (MenuId::Utilities, 16) => self.open_tool(crate::tools2::Kind::Flash),
-            (MenuId::Music, 3) => self.open_tool(crate::tools2::Kind::Metro),
+            (MenuId::Music, 5) => self.open_tool(crate::tools2::Kind::Metro),
             (MenuId::Lab, 2) => self.open_tool(crate::tools2::Kind::Scope),
             (MenuId::Lab, 3) => self.open_tool(crate::tools2::Kind::Health),
             (MenuId::Lab, 4) => self.open_tool(crate::tools2::Kind::Notary),
-            (MenuId::Games, i) if i >= 9 && i < 22 => self.open_game2(i - 9),
-            (MenuId::Music, 0) | (MenuId::Music, 1) | (MenuId::Music, 2) => {
+            (MenuId::Games, i) if i >= 9 && i < 24 => self.open_game2(i - 9),
+            (MenuId::Music, 0..=4) => {
                 self.snd.silence();
                 self.song_ended = false;
                 self.open(H_PLAYER, Screen::Player { idx: sel, playing: false })
@@ -1201,9 +1205,9 @@ impl App {
                     self.viz_pos = pos;
                     self.viz_note_at = now;
                 }
-                if now.duration_since(self.anim_at) >= Duration::from_millis(40) {
+                if now.duration_since(self.anim_at) >= Duration::from_millis(120) {
                     self.anim_at = now;
-                    self.player_spin += 0.16;
+                    self.player_spin += 0.35;
                     self.dirty = true;
                 }
             }
@@ -1513,9 +1517,6 @@ impl App {
                     playing: *playing,
                     ended: self.song_ended,
                     spin: self.player_spin,
-                    hz: if *playing { sound::cur_hz() } else { 0 },
-                    since_ms: self.viz_note_at.elapsed().as_millis() as u32,
-                    t_ms: self.started.elapsed().as_millis() as u32,
                     elapsed_s: done_ms / 1000,
                     total_s: total_ms / 1000,
                 };

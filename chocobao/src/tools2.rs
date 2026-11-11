@@ -278,7 +278,7 @@ impl ToolState {
             Kind::Calc => (0, 10),
             Kind::Units => (0, 11),
             Kind::Base => (0, 12),
-            Kind::Metro => (1, 3),
+            Kind::Metro => (1, 5),
             Kind::Habit => (0, 13),
             Kind::Morse => (0, 14),
             Kind::Typer => (0, 15),

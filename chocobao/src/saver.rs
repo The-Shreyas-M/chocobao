@@ -287,7 +287,7 @@ fn eyes(c: &mut Canvas, t: u32) {
         } else if f < 6300 {
             mood = 1;
             mshape = 1;
-            c.text((52 + ox).max(0) as usize, (my + 10).max(0) as usize, "yum!");
+            c.text((84 + ox).clamp(0, 100) as usize, (my - 4).clamp(0, 50) as usize, "yum!");
         } else {
             mood = 7; // happy hearts, then the cycle starts again
             mshape = 1;

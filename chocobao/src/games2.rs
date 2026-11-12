@@ -101,13 +101,12 @@ pub const ICONS: [[u8; 8]; 18] = [
 
 pub fn make(i: usize, t: &Trng) -> Box<dyn Game> {
     match i {
-        0 => Box::new(Breakout::new()),
+        0 | 9 => Box::new(Tower::new()), // Breakout and Lunar Lander were removed to save flash
         1 => Box::new(Tetris::new(t)),
         2 => Box::new(G2048::new(t)),
-        3 | 4 | 5 | 6 => Box::new(Breakout::new()), // Tic-Tac-Toe, Connect 4, Memory, Whack-a-Mole were removed to save flash
+        3 | 4 | 5 | 6 => Box::new(Tower::new()), // Tic-Tac-Toe, Connect 4, Memory, Whack-a-Mole were removed to save flash
         7 => Box::new(Mines::new()),
         8 => Box::new(Shooter::new()),
-        9 => Box::new(Lander::new(t)),
         10 => Box::new(Maze::new(t)),
         11 => Box::new(Tower::new()),
         12 => Box::new(Solitaire::new(t)),

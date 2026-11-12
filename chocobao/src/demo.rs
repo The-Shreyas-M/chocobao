@@ -1,5 +1,9 @@
 // demo.rs - the MMU demo (also runnable from the serial console with `mmu`, handy for testing without the buttons).
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
+
+/// Set once the kernel has killed the sandbox; it cannot be restarted until the chip restarts.
+static KILLED: AtomicBool = AtomicBool::new(false);
 
 use bao1x_hal_service::trng::Trng;
 
@@ -26,6 +30,9 @@ fn sandbox_ping(cid: xous::CID) -> bool {
 }
 
 pub fn mmu_attack(trng: &Trng) -> Vec<String> {
+    if KILLED.load(Ordering::Relaxed) {
+        return vec!["sandbox was already".to_string(), "killed by the kernel.".to_string(), "Power -> Restart".to_string(), "to run it again".to_string()];
+    }
     use ed25519_dalek::{Signer, SigningKey, Verifier};
     let addr = crate::vault::ensure(trng);
     let before = crate::vault::seed(trng);
@@ -41,6 +48,9 @@ pub fn mmu_attack(trng: &Trng) -> Vec<String> {
     let _ = xous::send_message(cid, xous::Message::new_scalar(2, addr, 0, 0, 0)); // the attack: no reply expected
     std::thread::sleep(Duration::from_millis(500));
     let alive_after = sandbox_ping(cid);
+    if !alive_after {
+        KILLED.store(true, Ordering::Relaxed);
+    }
     // the key must be untouched and still sign
     let after = crate::vault::seed(trng);
     let sk = SigningKey::from_bytes(&after);

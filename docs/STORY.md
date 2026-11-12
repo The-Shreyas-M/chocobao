@@ -41,7 +41,7 @@ Change one character of the reading and the verifier says INVALID. Replay an old
 2. Hold OK: the proof types itself into a text file on the PC.
 3. `python tools/verify.py proofs.txt` prints `VALID`. Change the value and it prints `INVALID`.
 4. Lab -> MMU demo, press OK: "KILLED by the MMU", "key intact, sig VALID". A second process just tried to read the key and the kernel stopped it.
-5. Quick tour of the rest: 21 games including Doom, music played by a BIO core, settings that survive a restart.
+5. Quick tour of the rest: 18 games including Doom, music played by a BIO core, settings that survive a restart.
 
 ## Honest limits
 | Limit | What it means |

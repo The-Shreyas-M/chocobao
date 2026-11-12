@@ -88,7 +88,7 @@ const fn it(label: &'static str, icon: &'static [u8; 8], desc: &'static str) -> 
 
 static MAIN_ITEMS: [Item; 6] = [
     it("Tools", &I_TOOLBOX, "Passwords, calc, timers.."),
-    it("Games", &I_GAMEPAD, "21 games, Doom, Ninja.."),
+    it("Games", &I_GAMEPAD, "18 games, Doom, Ninja.."),
     it("Music", &I_SPEAKER, "Tunes on the buzzer"),
     it("Lab", &I_FLASK, "Experiments"),
     it("Settings", &I_GEAR, "Saver, sound, tests, about"),
@@ -116,10 +116,10 @@ static UTIL_ITEMS: [Item; 14] = [
     it("Text presets", &I_WORDS, "Hold OK types a text"),
 ];
 /// Menu order of the games: ids (0..=7 old games, 8 Magic 8-ball, 9.. = games2 index + 9).
-const GAME_ORDER: [usize; 21] = [6, 22, 23, 24, 25, 26, 17, 10, 7, 20, 19, 18, 9, 0, 3, 1, 2, 16, 21, 11, 8];
+const GAME_ORDER: [usize; 18] = [6, 22, 23, 24, 25, 26, 17, 10, 7, 20, 19, 0, 3, 1, 2, 16, 21, 11];
 fn game_pos(id: usize) -> usize { GAME_ORDER.iter().position(|&g| g == id).unwrap_or(0) }
 
-static GAME_ITEMS: [Item; 21] = [
+static GAME_ITEMS: [Item; 18] = [
     it("Doom", &I_CROSS, "3D shooter, 5 levels"),
     it(crate::games2::NAMES[13], &crate::games2::ICONS[13], crate::games2::DESCS[13]),
     it(crate::games2::NAMES[14], &crate::games2::ICONS[14], crate::games2::DESCS[14]),
@@ -131,8 +131,6 @@ static GAME_ITEMS: [Item; 21] = [
     it("Pac-Man", &I_PAC, "Eat the dots, dodge ghosts"),
     it(crate::games2::NAMES[11], &crate::games2::ICONS[11], crate::games2::DESCS[11]),
     it(crate::games2::NAMES[10], &crate::games2::ICONS[10], crate::games2::DESCS[10]),
-    it(crate::games2::NAMES[9], &crate::games2::ICONS[9], crate::games2::DESCS[9]),
-    it(crate::games2::NAMES[0], &crate::games2::ICONS[0], crate::games2::DESCS[0]),
     it("Mempool Dodger", &I_DODGER, "Dodge blocks, grab coins"),
     it("Flappy Bird", &I_BIRD, "Fly through the gaps"),
     it("Snake", &I_SNAKE, "Eat, grow, don't crash"),
@@ -140,7 +138,6 @@ static GAME_ITEMS: [Item; 21] = [
     it(crate::games2::NAMES[7], &crate::games2::ICONS[7], crate::games2::DESCS[7]),
     it(crate::games2::NAMES[12], &crate::games2::ICONS[12], crate::games2::DESCS[12]),
     it(crate::games2::NAMES[2], &crate::games2::ICONS[2], crate::games2::DESCS[2]),
-    it("Magic 8-ball", &I_BALL, "Ask a yes/no question"),
 ];
 static MUSIC_ITEMS: [Item; 2] = [
     it("Tracks", &I_SPEAKER, "Songs: play from the list"),
@@ -313,7 +310,7 @@ enum Screen {
     Stats { page: u8 },
     Sleep(bool),       // screen off; true = pressing a key restarts the chip (after Shut down)
     Shutdown(Instant), // "saved, safe to unplug" for two seconds, then the screen goes off
-    Mmu { lines: Vec<String>, ran: bool },
+    Mmu { lines: Vec<String>, ran: bool, job: Option<std::sync::mpsc::Receiver<Vec<String>>>, since: Instant },
     Diag,
     About,
 }
@@ -971,10 +968,21 @@ impl App {
                     }
                 }
             }
-            Screen::Mmu { lines, ran } => {
+            Screen::Mmu { lines, ran, job, since } => {
                 if b == Btn::Ok && !*ran {
+                    // the attack runs on its own thread: this one must never wait on another process
                     *ran = true;
-                    *lines = crate::demo::mmu_attack(&self.trng);
+                    *since = Instant::now();
+                    *lines = vec!["running the attack...".to_string()];
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    std::thread::spawn(move || {
+                        let out = match xous_names::XousNames::new().ok().and_then(|x| bao1x_hal_service::trng::Trng::new(&x).ok()) {
+                            Some(t) => crate::demo::mmu_attack(&t),
+                            None => vec!["no random source".to_string()],
+                        };
+                        tx.send(out).ok();
+                    });
+                    *job = Some(rx);
                     redraw = true;
                 }
             }
@@ -1284,7 +1292,7 @@ impl App {
             (MenuId::Lab, 4) => self.open_tool(crate::tools2::Kind::Notary),
             (MenuId::Lab, 5) => {
                 let lines = crate::demo::mmu_intro(&self.trng);
-                self.goto(Screen::Mmu { lines, ran: false })
+                self.goto(Screen::Mmu { lines, ran: false, job: None, since: Instant::now() })
             }
             (MenuId::MusicTracks, 0..=3) => {
                 self.snd.silence();
@@ -1519,6 +1527,19 @@ impl App {
                 if now.duration_since(self.anim_at) >= Duration::from_millis(70) {
                     self.anim_at = now;
                     self.dirty = true;
+                }
+            }
+            Screen::Mmu { lines, job, since, .. } => {
+                if let Some(rx) = job {
+                    if let Ok(out) = rx.try_recv() {
+                        *lines = out;
+                        *job = None;
+                        self.dirty = true;
+                    } else if now.duration_since(*since) > Duration::from_millis(4000) {
+                        *lines = vec!["no answer in 4 s:".to_string(), "sandbox gone?".to_string(), "Power -> Restart".to_string(), "and try again".to_string()];
+                        *job = None;
+                        self.dirty = true;
+                    }
                 }
             }
             Screen::Stats { .. } => {

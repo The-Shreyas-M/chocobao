@@ -12,7 +12,7 @@ A sensor node (an ESP32) sends a reading to the Baochip over one wire. An I/O co
 
 | Area | Contents |
 |---|---|
-| Games (21) | Doom (5 levels), Jetpack Joyride, Road Rush, Subway Run, Ninja Run, Star Drifter (3D space), Space Invaders, Tetris, Pac-Man, Tower Blocks, Maze (3 levels), Lunar Lander, Breakout, Snake, Pong, Flappy Bird, Minesweeper, Solitaire, 2048, Magic 8-ball |
+| Games (18) | Doom (5 levels), Jetpack Joyride, Road Rush, Subway Run, Ninja Run, Star Drifter (3D space), Space Invaders, Tetris, Pac-Man, Tower Blocks, Maze (3 levels), Snake, Pong, Flappy Bird, Minesweeper, Solitaire, 2048, Mempool Dodger |
 | Music | 4 songs from MIDI files played by a BIO core on the buzzer, metronome |
 | Tools | Password maker (types into the PC), passphrase, PIN, dice, random number, stopwatch, timer, calculator, converters, morse trainer, text presets, BIP-39 seed words |
 | Lab | Mandelbrot zoom, button scope, TRNG health test, **Notary** (Ed25519 signed events), **MMU demo** |

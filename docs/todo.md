@@ -1,5 +1,9 @@
 # TODO
 
+## STATUS 12 Nov 2026 (v3.3.2, flashed and tested on the board)
+Working and checked on hardware: ESP32 -> BIO capture -> Notary signature -> verify.py (VALID / INVALID), MMU demo (sandbox killed, key intact, second run says restart), settings saved across restarts, 18 games, 4 songs.
+Open: record the 2-minute video; optional GitHub release with the three .uf2 files; optional next step: move the Notary signer into its own process; unknown: why the board sometimes lands in the bootloader right after flashing (type `boot` on COM11 or press RESET).
+
 ## SAVING SETTINGS (v3.0.2)
 `chocobao/src/store.rs` now saves through the keystore service's app key slots (the first attempt, mapping the ReRAM controller from the app, crashed the whole app at boot). It runs on its own thread and is on by default; hold BACK while the board starts to skip it. To confirm: change Settings -> Screensaver, wait a second, Power -> Restart, check it is still changed.
 

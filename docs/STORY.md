@@ -67,7 +67,7 @@ A proof is one line, fields separated by `|`:
 | Field | Meaning |
 |---|---|
 | count | 1, 2, 3 ... per power-up; must only increase |
-| ms | milliseconds since the app started (CPU clock) |
+| ms | milliseconds since the first proof of this power-up (CPU clock; 0 for the first one) |
 | event | for the ESP32: `ESP32:v=<0..255>:bio=<30-bit BIO clock count at the first pulse>`; for the buttons: `UP`, `DOWN`, `LEFT`, `RIGHT` |
 | signature | Ed25519 over the first four fields joined with `|` |
 | public key | 32-byte Ed25519 key of this power-up |

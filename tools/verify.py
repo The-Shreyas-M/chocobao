@@ -1,7 +1,7 @@
 """verify.py: check a ChocoBao Notary proof on the PC. No extra packages needed (pure Python Ed25519, RFC 8032).
 
 On the device: Lab -> Notary, press UP/DOWN/LEFT/RIGHT to create signed events, click a text box on the PC, HOLD OK.
-The device types one line:   CHOCONOTARY1|<count>|<ms since the app started>|<event>|<signature hex>|<public key hex>
+The device types one line:   CHOCONOTARY1|<count>|<ms since the first proof>|<event>|<signature hex>|<public key hex>
 Save one or more such lines in a text file and run:
 
     python tools/verify.py proofs.txt                 verify every line

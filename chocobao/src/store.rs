@@ -1,20 +1,19 @@
 // store.rs - keeps your settings, high scores and which help screens you have seen in the chip's ReRAM, so they
-// survive power-off and even re-flashing the app.
+// survive power-off and re-flashing.
 //
-// Where: the last 4 KiB page of the app region (offset 0x3D_9000 in the ReRAM array, just below the 0x3D_A000 limit
-// where "normal" writes stop). The app image is built to stay below that page (tools/build-chocobao.ps1 checks it),
-// and the flasher only writes the image's own blocks, so this page keeps its content when you flash a new app.
+// How: the Xous `keystore` service (the one process allowed to write the ReRAM) offers "application key slots":
+// 32-byte slots in a data area made for apps. We never touch the ReRAM controller ourselves (a first attempt that
+// mapped it directly crashed the whole app at boot).
 //
-// How: the page is a log of 42 records of 96 bytes. A save writes the NEXT record (round robin), so each ReRAM cell is
-// rewritten only once per 42 saves (ReRAM wears out after roughly 10,000 writes per cell: about 400,000 saves).
-// The newest valid record (highest sequence number, matching CRC) wins at start-up. A torn or garbage record is ignored.
-use std::pin::Pin;
+// Layout: 40 records of 3 slots (96 bytes) form a ring in slots 0..120. A save writes the NEXT record, so each slot
+// is rewritten once per 40 saves (ReRAM wears out after roughly 10,000 writes per cell: about 400,000 saves).
+// A record is valid when its magic and CRC match; the highest sequence number wins at start-up, so a record torn by a
+// power cut is ignored. All keystore calls happen on a worker thread: if the service ever hangs, only saving stops.
+use std::sync::mpsc::{channel, Sender};
+use std::time::Duration;
 
-use bao1x_hal::rram::Reram;
-
-const PAGE: usize = 0x3D_9000;
 const REC: usize = 96;
-const SLOTS: usize = 4096 / REC; // 42
+const RECORDS: usize = 40;
 const MAGIC: u16 = 0xC0B0;
 const VERSION: u8 = 1;
 
@@ -35,9 +34,7 @@ impl Default for Saved {
 }
 
 pub struct Store {
-    rram: Pin<Box<Reram>>,
-    next: usize,
-    seq: u32,
+    tx: Sender<Saved>,
     pub last: Saved,
 }
 
@@ -77,68 +74,82 @@ fn decode(r: &[u8]) -> Option<(u32, Saved)> {
     Some((u32::from_le_bytes([r[4], r[5], r[6], r[7]]), s))
 }
 
-impl Store {
-    /// Map the page and read the newest record. Returns None if the ReRAM page cannot be mapped (then nothing is saved).
-    pub fn open(stage: u8) -> Option<(Store, Option<Saved>)> {
-        log::info!("store: stage {} start", stage);
-        let mut rram = Reram::new();
-        log::info!("store: Reram::new ok");
-        if stage < 2 {
-            return None;
-        }
-        let range = xous::map_memory(
-            xous::MemoryAddress::new(utralib::HW_RERAM_MEM + PAGE),
-            None,
-            4096,
-            xous::MemoryFlags::R | xous::MemoryFlags::W,
-        )
-        .ok()?;
-        rram.add_range(PAGE, range);
-        log::info!("store: page mapped");
-        if stage < 3 {
-            return None;
-        }
-        let mut best: Option<(u32, usize, Saved)> = None;
-        for slot in 0..SLOTS {
-            let mut rec = [0u8; REC];
-            let mut ok = true;
-            for part in 0..3 {
-                match rram.array(PAGE + slot * REC + part * 32) {
-                    Ok(chunk) => rec[part * 32..part * 32 + 32].copy_from_slice(&chunk[..32]),
-                    Err(_) => ok = false,
-                }
-            }
-            if !ok {
-                return None;
-            }
-            if let Some((seq, s)) = decode(&rec) {
+fn read_record(ks: &keystore::Keystore, rec: usize) -> Option<[u8; REC]> {
+    let mut out = [0u8; REC];
+    for part in 0..3 {
+        let slot = ks.read_app_key(rec * 3 + part).ok()?;
+        out[part * 32..part * 32 + 32].copy_from_slice(&slot);
+    }
+    Some(out)
+}
+
+fn worker(rx: std::sync::mpsc::Receiver<Saved>, ready: Sender<Option<Saved>>) {
+    let xns = match xous_names::XousNames::new() {
+        Ok(x) => x,
+        Err(_) => return,
+    };
+    let ks = keystore::Keystore::new(&xns);
+    // find the newest valid record; stop after two invalid ones in a row (the rest was never written)
+    let mut best: Option<(u32, usize, Saved)> = None;
+    let mut bad = 0;
+    for rec in 0..RECORDS {
+        match read_record(&ks, rec).and_then(|b| decode(&b)) {
+            Some((seq, s)) => {
+                bad = 0;
                 if best.as_ref().map_or(true, |b| seq.wrapping_sub(b.0) < 0x8000_0000 && seq != b.0) {
-                    best = Some((seq, slot, s));
+                    best = Some((seq, rec, s));
+                }
+            }
+            None => {
+                bad += 1;
+                if bad >= 2 {
+                    break;
                 }
             }
         }
-        let (seq, next, saved, last) = match best {
-            Some((seq, slot, s)) => (seq, (slot + 1) % SLOTS, Some(s.clone()), s),
-            None => (0, 0, None, Saved::default()),
-        };
-        Some((Store { rram, next, seq, last }, saved))
+    }
+    let (mut seq, mut next, saved) = match best {
+        Some((seq, rec, s)) => (seq, (rec + 1) % RECORDS, Some(s)),
+        None => (0, 0, None),
+    };
+    log::info!("store: loaded {}", saved.is_some());
+    ready.send(saved).ok();
+    // from now on: write whatever the app sends us
+    while let Ok(mut s) = rx.recv() {
+        while let Ok(newer) = rx.try_recv() {
+            s = newer; // several changes in a row cost one write
+        }
+        seq = seq.wrapping_add(1);
+        let rec = encode(&s, seq);
+        let mut ok = true;
+        for part in 0..3 {
+            let mut slot = [0u8; 32];
+            slot.copy_from_slice(&rec[part * 32..part * 32 + 32]);
+            if ks.write_app_key(next * 3 + part, &slot).is_err() {
+                ok = false;
+                break;
+            }
+        }
+        log::info!("store: saved record {} ok={}", next, ok);
+        next = (next + 1) % RECORDS;
+    }
+}
+
+impl Store {
+    /// Start the worker and read the newest saved settings. None if the keystore does not answer within 4 s.
+    pub fn open() -> Option<(Store, Option<Saved>)> {
+        let (tx, rx) = channel::<Saved>();
+        let (ready_tx, ready_rx) = channel();
+        std::thread::Builder::new().name("store".into()).spawn(move || worker(rx, ready_tx)).ok()?;
+        let saved = ready_rx.recv_timeout(Duration::from_secs(4)).ok()?;
+        let last = saved.clone().unwrap_or_default();
+        Some((Store { tx, last }, saved))
     }
 
-    /// Write the settings into the next record. Returns true if the ReRAM accepted and verified the write.
+    /// Queue the settings for writing (done on the worker thread). Returns false if the worker is gone.
     pub fn save(&mut self, s: &Saved) -> bool {
-        let seq = self.seq.wrapping_add(1);
-        let rec = encode(s, seq);
-        match self.rram.write_slice(PAGE + self.next * REC, &rec) {
-            Ok(_) => {
-                self.seq = seq;
-                self.next = (self.next + 1) % SLOTS;
-                self.last = s.clone();
-                true
-            }
-            Err(e) => {
-                log::error!("settings save failed: {:?}", e);
-                false
-            }
-        }
+        let ok = self.tx.send(s.clone()).is_ok();
+        self.last = s.clone();
+        ok
     }
 }

@@ -24,7 +24,7 @@ Made by Shreyas for the Dabao Open Hackathon. License: Apache-2.0.
 | Ed25519 | Notary signs `CHOCONOTARY1\|n\|ms\|event`; `tools/verify.py` checks it on the PC |
 | USB HID | types secrets into any PC, no driver; secrets are never shown on the OLED |
 | UDMA I2C | OLED at 1 MHz, about 11 ms per full frame |
-| ReRAM | settings and high scores saved (see Status) |
+| ReRAM (via keystore app slots) | settings, high scores and seen help screens saved |
 | Xous MMU and kernel | "MMU probe" asks the kernel for pages owned by other processes and shows its real answers |
 
 ## Quick start
@@ -87,7 +87,7 @@ The key is made by the TRNG and lives in RAM only. It proves that whoever held t
 | Board mode | developer mode: secrets are not protected against someone holding the board |
 | Notary isolation | the signer shares the app's memory; there is no second process yet |
 | MMU probe | shows kernel refusals for other processes' pages; it is not a full two-process demo |
-| Saved settings | being proven on hardware; see `docs/todo.md` |
+| Saved settings | stored via the keystore service's app slots; boots and runs stable, persistence across a restart still being confirmed |
 | Games and tools | tested on the board by hand, the newest ones less than the older ones |
 | Flash | app image uses about 800 KB of 870 KB |
 

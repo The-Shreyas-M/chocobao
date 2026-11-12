@@ -33,7 +33,7 @@ use crate::sound::{self, Sound};
 
 const TICK_MS: u64 = 16;
 /// Stage switch while the ReRAM saving is being proven on the real board.
-const PERSIST_WRITES: bool = false;
+const PERSIST_WRITES: bool = true;
 const WATCHDOG_MS: u32 = 20_000; // only a truly dead display bus should restart the app
 const WIPE_MS: u128 = 180;
 const IDLE_CHOICES: [u64; 7] = [15, 30, 45, 90, 180, 600, 0]; // idle seconds before the screensaver (0 = never)
@@ -350,7 +350,7 @@ fn mmu_probe() -> Vec<(String, String)> {
         ask("Kernel RAM", 0x6100_0000),
         ask("HAL I2C RAM", bao1x_hal::board::I2C_IFRAM_ADDR),
         ask("USB buffers", utralib::HW_IFRAM0_MEM),
-        ask("Own save page", 0x6000_0000 + 0x3D_9000),
+        ask("Own page", 0x6000_0000 + 0x3D_9000),
     ]
 }
 
@@ -564,10 +564,9 @@ fn run(rx: Receiver<Input>) {
         last_secs: 0,
     };
     // restore the saved settings (screensaver, idle time, sound, high scores, levels, seen help screens)
-    // while the ReRAM saving is proven on the real board it only runs when a button is held at power-on:
-    // UP = step 1 (claim the ReRAM controller), RIGHT = step 2 (also map the settings page), LEFT = step 3 (also read it)
-    let stage = if held[bidx(Btn::Left)] { 3 } else if held[bidx(Btn::Right)] { 2 } else if held[bidx(Btn::Up)] { 1 } else { 0 };
-    let opened = if stage == 0 { None } else { std::panic::catch_unwind(AssertUnwindSafe(|| crate::store::Store::open(stage))).ok().flatten() };
+    // restore the saved settings (screensaver, idle time, sound, high scores, levels, seen help screens);
+    // hold BACK while the board starts to skip this (safe mode). The keystore is asked on its own thread.
+    let opened = if held[bidx(Btn::Back)] { None } else { std::panic::catch_unwind(AssertUnwindSafe(crate::store::Store::open)).ok().flatten() };
     if let Some((st, saved)) = opened {
         app.store = Some(st);
         if let Some(s) = saved {
@@ -1850,12 +1849,11 @@ impl App {
             }
             Screen::Sleep(_) => {}
             Screen::Mmu { results } => {
-                oled.text(0, 0, "MMU probe: the kernel");
+                oled.text(0, 0, "Kernel page requests");
                 for (i, (what, verdict)) in results.iter().enumerate().take(4) {
                     oled.text(0, 12 + 12 * i, what);
-                    oled.text(78, 12 + 12 * i, verdict);
+                    oled.text(84, 12 + 12 * i, verdict);
                 }
-                oled.text(0, 56, "real answers, live");
             }
             Screen::Stats { page } => {
                 let v = &self.stat_view;

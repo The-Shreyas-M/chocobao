@@ -81,3 +81,23 @@ If the order printed on your board differs, trust the printed names.
 |---|---|
 | BACK | no display, no sound |
 | DOWN | no sound |
+
+## 7. ESP32 sensor node (optional, for the Notary demo)
+
+A classic ESP32 DevKit sends a sensor value to the Dabao over one wire. A Dabao I/O core timestamps the pulses, the Notary signs the event, the PC verifies it.
+
+| ESP32 | Dabao label | Purpose |
+|---|---|---|
+| GPIO5 | PC8 | event line (the only data wire) |
+| GND | GND | common ground, required |
+| GPIO23 to GND | not on the Dabao | demo key: a push button between GPIO23 and GND |
+
+| Step | Action |
+|---|---|
+| 1 | Power the ESP32 from its own USB cable. Do not connect its 3V3 or 5V pins to the Dabao |
+| 2 | Flash MicroPython once: `python -m esptool --port COMx erase_flash`, then `write_flash -z 0x1000 ESP32_GENERIC-*.bin` |
+| 3 | Copy `tools/esp32/sensor_node.py` and `tools/esp32/main.py` to the ESP32 (`mpremote cp`) |
+| 4 | On the Dabao open Lab -> Notary, then press the ESP32 key (or its BOOT button): the screen shows `ESP32:v=<n>:bio=<ticks>` and a signature |
+| 5 | Hold OK to type the proof into the PC, run `python tools/verify.py proofs.txt` |
+
+If you wired GPIO21/22 to PB12/PB11 earlier, those two wires are not used and can be removed. Check the link with `python tools/diag_once.py`: `ev=edges/frames/bad` should count up when the ESP32 sends.

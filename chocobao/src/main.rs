@@ -3,6 +3,7 @@ mod bootmode;
 mod controls;
 mod diag;
 mod display;
+mod events;
 mod doom;
 mod games;
 mod games2;
@@ -15,6 +16,7 @@ mod player;
 mod rng;
 mod saver;
 mod store;
+mod vault;
 mod seed;
 mod sound;
 mod tools2;
@@ -49,6 +51,7 @@ fn main() {
     let (tx, rx) = std::sync::mpsc::channel();
     controls::start(tx);
     app::start(rx);
+    events::start();
 
     #[cfg(feature = "ctap-bringup")]
     {

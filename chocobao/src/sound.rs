@@ -243,7 +243,7 @@ fn init_tone() -> Result<Tone, String> {
     let mask_a = 1u32 << u5::new(BIO_PIN).as_u32();
     let mut io = IoConfig::default();
     io.mapped = mask_a | mask_b;
-    io.mode = IoConfigMode::Overwrite;
+    io.mode = IoConfigMode::SetOnly; // add our pins; never wipe the other core's mapping
     bio.setup_io_config(io).map_err(|e| format!("io {:?}", e))?;
     // safety: the handle is stored in the Tone object so it outlives the CSR view
     let handle = unsafe { bio.get_core_handle(Fifo::Fifo1) }

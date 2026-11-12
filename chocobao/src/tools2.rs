@@ -61,7 +61,7 @@ pub fn help(k: Kind) -> (&'static str, [&'static str; 4]) {
         Kind::Synth => ("Chord synth", ["<> root note", "^v chord type", "OK plays 4 voices", "shared on one pin"]),
         Kind::Scope => ("Button scope", ["shows the last 2 s of", "all six button pins", "press buttons to see", "pulses (CPU sampled)"]),
         Kind::Health => ("TRNG health", ["live random bits from", "the hardware TRNG with", "simple quality tests", "OK = restart counts"]),
-        Kind::Notary => ("Notary", ["^v<> press = an event", "each one is signed with", "Ed25519 (key in RAM)", "HOLD OK types the proof"]),
+        Kind::Notary => ("Notary", ["^v<> or ESP32 = event", "signed with Ed25519", "(key in RAM, from TRNG)", "HOLD OK types the proof"]),
         Kind::Beacon => ("AM beacon", ["OK = start / stop", "keys a 250 kHz carrier", "in morse (SHREYAS).", "AM radio near? try it"]),
     }
 }
@@ -210,7 +210,6 @@ pub struct ToolState {
 
 /// The signing key lives only here, in RAM, and is never drawn or typed; only signatures and the public key leave.
 struct Notary {
-    seed: [u8; 32],
     n: u32,
     msg: String,
     sig_hex: String,
@@ -220,13 +219,13 @@ struct Notary {
 fn hex(b: &[u8]) -> String { b.iter().map(|x| format!("{:02x}", x)).collect() }
 
 impl Notary {
-    fn sign(&mut self, evt: &str) {
+    fn sign(&mut self, evt: &str, seed: [u8; 32]) {
         use ed25519_dalek::{Signer, SigningKey};
         static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
         let ms = START.get_or_init(Instant::now).elapsed().as_millis();
         self.n += 1;
         self.msg = format!("CHOCONOTARY1|{}|{}|{}", self.n, ms, evt);
-        let sk = SigningKey::from_bytes(&self.seed);
+        let sk = SigningKey::from_bytes(&seed);
         let sig = sk.sign(self.msg.as_bytes());
         self.sig_hex = hex(&sig.to_bytes());
         self.pub_hex = hex(&sk.verifying_key().to_bytes());
@@ -454,22 +453,24 @@ impl ToolState {
                 if evt.is_empty() {
                     o.redraw = false;
                 } else {
-                    if self.notary.is_none() {
-                        let mut seed = [0u8; 32];
-                        for ch in seed.chunks_mut(4) {
-                            let x = trng.get_u32().unwrap_or(0).to_le_bytes();
-                            ch.copy_from_slice(&x);
-                        }
-                        self.notary = Some(Box::new(Notary { seed, n: 0, msg: String::new(), sig_hex: String::new(), pub_hex: String::new() }));
-                    }
+                    self.ensure_notary(trng);
+                    let seed = crate::vault::seed(trng);
                     if let Some(n) = self.notary.as_mut() {
-                        n.sign(evt);
+                        n.sign(evt, seed);
                     }
                     o.play = Some(vec![(C6, 25)]);
                 }
             }
         }
         o
+    }
+
+    /// Make the signing key (from the hardware TRNG, kept in RAM only) the first time it is needed.
+    fn ensure_notary(&mut self, trng: &Trng) {
+        if self.notary.is_none() {
+            crate::vault::ensure(trng); // the seed is made once and lives on its own memory page
+            self.notary = Some(Box::new(Notary { n: 0, msg: String::new(), sig_hex: String::new(), pub_hex: String::new() }));
+        }
     }
 
     /// Called when OK is released (`held` ms): the text presets type on a long press.
@@ -497,6 +498,17 @@ impl ToolState {
     pub fn tick(&mut self, trng: &Trng, now: Instant, down: &[bool; 6]) -> Out {
         let mut o = Out::default();
         match self.kind {
+            Kind::Notary => {
+                // events from the sensor node: the BIO core timestamped the pulses, the CPU only decodes them
+                while let Some(ev) = crate::events::poll() {
+                    self.ensure_notary(trng);
+                    if let Some(n) = self.notary.as_mut() {
+                        n.sign(&format!("ESP32:v={}:bio={}", ev.value, ev.ticks), crate::vault::seed(trng));
+                    }
+                    o.play = Some(vec![(C6, 25)]);
+                    o.redraw = true;
+                }
+            }
             Kind::Metro => {
                 if self.flag && now >= self.next_at {
                     let bpm = self.val.clamp(30.0, 260.0);
@@ -756,7 +768,7 @@ impl ToolState {
                         c.text(0, 26, &format!("sig {}..", &n.sig_hex[..12]));
                         c.text(0, 37, &format!("pub {}..", &n.pub_hex[..12]));
                     }
-                    _ => c.text(0, 15, "press ^ v < > = event"),
+                    _ => c.text(0, 15, "press a key or ESP32"),
                 }
                 c.text(0, 53, "HOLD OK: type proof");
             }

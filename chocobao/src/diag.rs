@@ -16,6 +16,15 @@ pub static SCREEN: AtomicU32 = AtomicU32::new(0); // which screen is showing (se
 pub static MODE: AtomicU32 = AtomicU32::new(0); // bit0 = display off, bit1 = sound off (safe-mode switches)
 pub static BTN_EVENTS: AtomicU32 = AtomicU32::new(0); // button events received
 
+pub static EV_MSG: std::sync::Mutex<String> = std::sync::Mutex::new(String::new()); // status of the BIO event core
+pub static EV_PC8: AtomicU32 = AtomicU32::new(9); // level of the EVENT pin read by the CPU (9 = not read yet)
+pub static EV_HB: AtomicU32 = AtomicU32::new(0); // pins as seen by the BIO event core (bit 8 = EVENT)
+pub static EV_HBN: AtomicU32 = AtomicU32::new(0); // heartbeats received from the BIO event core
+pub static EV_EDGES: AtomicU32 = AtomicU32::new(0); // pulses timestamped by the BIO event core
+pub static EV_FRAMES: AtomicU32 = AtomicU32::new(0); // complete sensor frames decoded
+pub static EV_BAD: AtomicU32 = AtomicU32::new(0); // frames that failed to decode (noise)
+pub static EV_LAST: AtomicU32 = AtomicU32::new(0); // last decoded value
+pub static EV_GAP: AtomicU32 = AtomicU32::new(0); // reference gap of the last frame, in BIO clocks
 pub static APP_BUSY_US: AtomicU32 = AtomicU32::new(0); // microseconds the app loop spent working (not sleeping), wraps
 pub static DISP_BUSY_MS: AtomicU32 = AtomicU32::new(0); // milliseconds the display thread spent in I2C transfers
 pub static SND_BUSY_MS: AtomicU32 = AtomicU32::new(0); // milliseconds the BIO core spent making tones
@@ -71,7 +80,7 @@ pub fn max(a: &AtomicU32, v: u32) {
 /// One line, easy to parse: `DIAG up=1234 ticks=.. ...`
 pub fn line() -> String {
     format!(
-        "DIAG up={} ticks={} loopmax={} push={} fail={} pushmax={} stuck={} panic={} wd={} scr={} btn={} mode={}",
+        "DIAG up={} ticks={} loopmax={} push={} fail={} pushmax={} stuck={} panic={} wd={} scr={} btn={} mode={} ev={}/{}/{} last={} gap={} pc8={} evs={} hb={:04x}/{}",
         uptime_ms(),
         TICKS.load(Relaxed),
         LOOP_MAX_MS.load(Relaxed),
@@ -84,5 +93,14 @@ pub fn line() -> String {
         SCREEN.load(Relaxed),
         BTN_EVENTS.load(Relaxed),
         MODE.load(Relaxed),
+        EV_EDGES.load(Relaxed),
+        EV_FRAMES.load(Relaxed),
+        EV_BAD.load(Relaxed),
+        EV_LAST.load(Relaxed),
+        EV_GAP.load(Relaxed),
+        EV_PC8.load(Relaxed),
+        EV_MSG.lock().map(|m| m.replace(' ', "_")).unwrap_or_default(),
+        EV_HB.load(Relaxed),
+        EV_HBN.load(Relaxed),
     )
 }

@@ -11,7 +11,7 @@ Made by Shreyas for the Dabao Open Hackathon. License: Apache-2.0.
 | Games (21) | Doom (5 levels), Jetpack Joyride, Road Rush, Subway Run, Ninja Run, Star Drifter (3D space), Space Invaders, Tetris, Pac-Man, Tower Blocks, Maze (3 levels), Lunar Lander, Breakout, Snake, Pong, Flappy Bird, Minesweeper, Solitaire, 2048, Magic 8-ball |
 | Music | 4 songs from MIDI files played by a BIO core on the buzzer, metronome |
 | Tools | Password maker (types into the PC), passphrase, PIN, dice, random number, stopwatch, timer, calculator, converters, morse trainer, text presets, BIP-39 seed words |
-| Lab | Mandelbrot zoom, button scope, TRNG health test, **Notary** (Ed25519 signed events), **MMU probe** |
+| Lab | Mandelbrot zoom, button scope, TRNG health test, **Notary** (Ed25519 signed events), **MMU demo** |
 | Settings | Screensaver, idle time, sound, buzzer test, button test, CPU stats, diagnostics, About |
 | Power | Sleep, restart, shut down |
 
@@ -25,7 +25,8 @@ Made by Shreyas for the Dabao Open Hackathon. License: Apache-2.0.
 | USB HID | types secrets into any PC, no driver; secrets are never shown on the OLED |
 | UDMA I2C | OLED at 1 MHz, about 11 ms per full frame |
 | ReRAM (via keystore app slots) | settings, high scores and seen help screens saved |
-| Xous MMU and kernel | "MMU probe" asks the kernel for pages owned by other processes and shows its real answers |
+| Xous MMU, two processes | Lab -> MMU demo: a sandbox process reads the Notary's key page address, the kernel kills only the sandbox, the key still signs |
+| BIO event capture | an I/O core timestamps pulses from an ESP32 sensor node; the Notary signs each reading |
 
 ## Quick start
 
@@ -85,8 +86,8 @@ The key is made by the TRNG and lives in RAM only. It proves that whoever held t
 | Item | State |
 |---|---|
 | Board mode | developer mode: secrets are not protected against someone holding the board |
-| Notary isolation | the signer shares the app's memory; there is no second process yet |
-| MMU probe | shows kernel refusals for other processes' pages; it is not a full two-process demo |
+| Notary isolation | the key sits on its own page of the main app; the sandbox process cannot read it. Code inside the main app can |
+| MMU demo | two real processes in one image; tested on the board as described in docs |
 | Saved settings | stored via the keystore service's app slots; boots and runs stable, persistence across a restart still being confirmed |
 | Games and tools | tested on the board by hand, the newest ones less than the older ones |
 | Flash | app image uses about 800 KB of 870 KB |

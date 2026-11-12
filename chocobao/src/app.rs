@@ -88,7 +88,7 @@ const fn it(label: &'static str, icon: &'static [u8; 8], desc: &'static str) -> 
 
 static MAIN_ITEMS: [Item; 6] = [
     it("Tools", &I_TOOLBOX, "Passwords, calc, timers.."),
-    it("Games", &I_GAMEPAD, "27 games, Doom, Ninja.."),
+    it("Games", &I_GAMEPAD, "21 games, Doom, Ninja.."),
     it("Music", &I_SPEAKER, "Tunes on the buzzer"),
     it("Lab", &I_FLASK, "Experiments"),
     it("Settings", &I_GEAR, "Saver, sound, tests, about"),
@@ -99,7 +99,7 @@ static POWER_ITEMS: [Item; 3] = [
     it("Restart", &I_BOLT, "Reboot the whole chip"),
     it("Shut down", &I_BOLT, "Save, screen off"),
 ];
-static UTIL_ITEMS: [Item; 17] = [
+static UTIL_ITEMS: [Item; 14] = [
     it("Password maker", &I_KEY, "Rules for any website"),
     it("Passphrase", &I_WORDS, "Random words, 11 bits each"),
     it("PIN maker", &I_PIN, "Random digits"),
@@ -109,20 +109,17 @@ static UTIL_ITEMS: [Item; 17] = [
     it("Timer", &I_HOURGLASS, "Countdown with alarm"),
     it("Entropy meter", &I_BARS, "Live check of the TRNG"),
     it("Seed words", &I_WORDS, "Valid BIP-39, 12-24 words"),
-    it("Clock", &I_STOPWATCH, "A watch you set by hand"),
     it("Calculator", &I_BARS, "+ - * / with decimals"),
     it("Unit converter", &I_RANDOM, "km, kg, C/F, inch.."),
     it("Base converter", &I_PIN, "Dec, hex, binary"),
-    it("Habit counter", &I_BOLT, "Tally four habits"),
     it("Morse trainer", &I_SPEAKER, "Learn and quiz morse"),
     it("Text presets", &I_WORDS, "Hold OK types a text"),
-    it("Flashlight", &I_INFO, "White screen, strobe"),
 ];
 /// Menu order of the games: ids (0..=7 old games, 8 Magic 8-ball, 9.. = games2 index + 9).
-const GAME_ORDER: [usize; 27] = [6, 22, 23, 24, 25, 26, 17, 10, 7, 20, 19, 18, 9, 0, 3, 1, 2, 16, 21, 11, 13, 15, 14, 12, 4, 5, 8];
+const GAME_ORDER: [usize; 21] = [6, 22, 23, 24, 25, 26, 17, 10, 7, 20, 19, 18, 9, 0, 3, 1, 2, 16, 21, 11, 8];
 fn game_pos(id: usize) -> usize { GAME_ORDER.iter().position(|&g| g == id).unwrap_or(0) }
 
-static GAME_ITEMS: [Item; 27] = [
+static GAME_ITEMS: [Item; 21] = [
     it("Doom", &I_CROSS, "3D shooter, 5 levels"),
     it(crate::games2::NAMES[13], &crate::games2::ICONS[13], crate::games2::DESCS[13]),
     it(crate::games2::NAMES[14], &crate::games2::ICONS[14], crate::games2::DESCS[14]),
@@ -143,24 +140,17 @@ static GAME_ITEMS: [Item; 27] = [
     it(crate::games2::NAMES[7], &crate::games2::ICONS[7], crate::games2::DESCS[7]),
     it(crate::games2::NAMES[12], &crate::games2::ICONS[12], crate::games2::DESCS[12]),
     it(crate::games2::NAMES[2], &crate::games2::ICONS[2], crate::games2::DESCS[2]),
-    it(crate::games2::NAMES[4], &crate::games2::ICONS[4], crate::games2::DESCS[4]),
-    it(crate::games2::NAMES[6], &crate::games2::ICONS[6], crate::games2::DESCS[6]),
-    it(crate::games2::NAMES[5], &crate::games2::ICONS[5], crate::games2::DESCS[5]),
-    it(crate::games2::NAMES[3], &crate::games2::ICONS[3], crate::games2::DESCS[3]),
-    it("Simon", &I_SIMON, "Repeat the arrow pattern"),
-    it("Reaction", &I_BOLT, "How fast are you?"),
     it("Magic 8-ball", &I_BALL, "Ask a yes/no question"),
 ];
 static MUSIC_ITEMS: [Item; 2] = [
     it("Tracks", &I_SPEAKER, "Songs: play from the list"),
     it("Tools", &I_HOURGLASS, "Metronome"),
 ];
-static TRACK_ITEMS: [Item; 5] = [
+static TRACK_ITEMS: [Item; 4] = [
     it("Closer", &I_SPEAKER, "The Chainsmokers"),
     it("Blinding Lights", &I_SPEAKER, "The Weeknd"),
     it("Attention", &I_SPEAKER, "Charlie Puth"),
     it("Heavenly Jumpstyle", &I_SPEAKER, "Heavenly"),
-    it("AURA", &I_SPEAKER, "Ogryzek"),
 ];
 static MTOOL_ITEMS: [Item; 1] = [it("Metronome", &I_HOURGLASS, "Tempo clicks, beats")];
 static LAB_ITEMS: [Item; 6] = [
@@ -1300,14 +1290,11 @@ impl App {
                 self.open(H_SEED, Screen::Seed { n: 12, idx, page: 0 })
             }
             (MenuId::Games, pos) if pos < GAME_ORDER.len() => self.open_game_id(GAME_ORDER[pos]),
-            (MenuId::Utilities, 9) => self.open(H_CLOCK, Screen::Clock { edit: false }),
-            (MenuId::Utilities, 10) => self.open_tool(crate::tools2::Kind::Calc),
-            (MenuId::Utilities, 11) => self.open_tool(crate::tools2::Kind::Units),
-            (MenuId::Utilities, 12) => self.open_tool(crate::tools2::Kind::Base),
-            (MenuId::Utilities, 13) => self.open_tool(crate::tools2::Kind::Habit),
-            (MenuId::Utilities, 14) => self.open_tool(crate::tools2::Kind::Morse),
-            (MenuId::Utilities, 15) => self.open_tool(crate::tools2::Kind::Typer),
-            (MenuId::Utilities, 16) => self.open_tool(crate::tools2::Kind::Flash),
+            (MenuId::Utilities, 9) => self.open_tool(crate::tools2::Kind::Calc),
+            (MenuId::Utilities, 10) => self.open_tool(crate::tools2::Kind::Units),
+            (MenuId::Utilities, 11) => self.open_tool(crate::tools2::Kind::Base),
+            (MenuId::Utilities, 12) => self.open_tool(crate::tools2::Kind::Morse),
+            (MenuId::Utilities, 13) => self.open_tool(crate::tools2::Kind::Typer),
             (MenuId::Music, 0) => self.goto(Screen::Menu(MenuId::MusicTracks, 0)),
             (MenuId::Music, 1) => self.goto(Screen::Menu(MenuId::MusicTools, 0)),
             (MenuId::MusicTools, 0) => self.open_tool(crate::tools2::Kind::Metro),
@@ -1315,7 +1302,7 @@ impl App {
             (MenuId::Lab, 3) => self.open_tool(crate::tools2::Kind::Health),
             (MenuId::Lab, 4) => self.open_tool(crate::tools2::Kind::Notary),
             (MenuId::Lab, 5) => self.goto(Screen::Mmu { results: mmu_probe() }),
-            (MenuId::MusicTracks, 0..=4) => {
+            (MenuId::MusicTracks, 0..=3) => {
                 self.snd.silence();
                 self.song_ended = false;
                 self.open(H_PLAYER, Screen::Player { idx: sel, playing: false })

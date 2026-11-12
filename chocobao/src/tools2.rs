@@ -275,13 +275,13 @@ impl ToolState {
     pub fn menu_slot(&self) -> (u8, usize) {
         // (0 = Tools, 1 = Music, 2 = Lab), item index
         match self.kind {
-            Kind::Calc => (0, 10),
-            Kind::Units => (0, 11),
-            Kind::Base => (0, 12),
+            Kind::Calc => (0, 9),
+            Kind::Units => (0, 10),
+            Kind::Base => (0, 11),
             Kind::Metro => (1, 0),
             Kind::Habit => (0, 13),
-            Kind::Morse => (0, 14),
-            Kind::Typer => (0, 15),
+            Kind::Morse => (0, 12),
+            Kind::Typer => (0, 13),
             Kind::Flash => (0, 16),
             Kind::Synth => (1, 2),
             Kind::Scope => (2, 2),

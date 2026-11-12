@@ -8,9 +8,9 @@ Made by Shreyas for the Dabao Open Hackathon. License: Apache-2.0.
 
 | Area | Contents |
 |---|---|
-| Games (27) | Doom (5 levels), Jetpack Joyride, Road Rush, Subway Run, Ninja Run, Star Drifter (3D space), Space Invaders, Tetris, Pac-Man, Tower Blocks, Maze (3 levels), Lunar Lander, Breakout, Snake, Pong, Flappy Bird, Minesweeper, Solitaire, 2048 and more |
-| Music | 5 songs from MIDI files played by a BIO core on the buzzer, metronome |
-| Tools | Password maker (types into the PC), passphrase, PIN, dice, random number, stopwatch, timer, clock, calculator, converters, habit counter, morse trainer, text presets, flashlight, BIP-39 seed words |
+| Games (21) | Doom (5 levels), Jetpack Joyride, Road Rush, Subway Run, Ninja Run, Star Drifter (3D space), Space Invaders, Tetris, Pac-Man, Tower Blocks, Maze (3 levels), Lunar Lander, Breakout, Snake, Pong, Flappy Bird, Minesweeper, Solitaire, 2048, Magic 8-ball |
+| Music | 4 songs from MIDI files played by a BIO core on the buzzer, metronome |
+| Tools | Password maker (types into the PC), passphrase, PIN, dice, random number, stopwatch, timer, calculator, converters, morse trainer, text presets, BIP-39 seed words |
 | Lab | Mandelbrot zoom, button scope, TRNG health test, **Notary** (Ed25519 signed events), **MMU probe** |
 | Settings | Screensaver, idle time, sound, buzzer test, button test, CPU stats, diagnostics, About |
 | Power | Sleep, restart, shut down |

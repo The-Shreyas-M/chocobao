@@ -219,16 +219,17 @@ struct Notary {
 fn hex(b: &[u8]) -> String { b.iter().map(|x| format!("{:02x}", x)).collect() }
 
 impl Notary {
-    fn sign(&mut self, evt: &str, seed: [u8; 32]) {
-        use ed25519_dalek::{Signer, SigningKey};
+    fn sign(&mut self, evt: &str) {
         static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
         let ms = START.get_or_init(Instant::now).elapsed().as_millis();
-        self.n += 1;
-        self.msg = format!("CHOCONOTARY1|{}|{}|{}", self.n, ms, evt);
-        let sk = SigningKey::from_bytes(&seed);
-        let sig = sk.sign(self.msg.as_bytes());
-        self.sig_hex = hex(&sig.to_bytes());
-        self.pub_hex = hex(&sk.verifying_key().to_bytes());
+        let msg = format!("CHOCONOTARY1|{}|{}|{}", self.n + 1, ms, evt);
+        // the key is in the signer process: we only get the signature back
+        if let Some((sig, pubk)) = crate::signer::sign(msg.as_bytes()) {
+            self.n += 1;
+            self.msg = msg;
+            self.sig_hex = hex(&sig);
+            self.pub_hex = hex(&pubk);
+        }
     }
 }
 
@@ -454,9 +455,8 @@ impl ToolState {
                     o.redraw = false;
                 } else {
                     self.ensure_notary(trng);
-                    let seed = crate::vault::seed(trng);
                     if let Some(n) = self.notary.as_mut() {
-                        n.sign(evt, seed);
+                        n.sign(evt);
                     }
                     o.play = Some(vec![(C6, 25)]);
                 }
@@ -466,9 +466,8 @@ impl ToolState {
     }
 
     /// Make the signing key (from the hardware TRNG, kept in RAM only) the first time it is needed.
-    fn ensure_notary(&mut self, trng: &Trng) {
+    fn ensure_notary(&mut self, _trng: &Trng) {
         if self.notary.is_none() {
-            crate::vault::ensure(trng); // the seed is made once and lives on its own memory page
             self.notary = Some(Box::new(Notary { n: 0, msg: String::new(), sig_hex: String::new(), pub_hex: String::new() }));
         }
     }
@@ -503,7 +502,7 @@ impl ToolState {
                 while let Some(ev) = crate::events::poll() {
                     self.ensure_notary(trng);
                     if let Some(n) = self.notary.as_mut() {
-                        n.sign(&format!("ESP32:v={}:bio={}", ev.value, ev.ticks), crate::vault::seed(trng));
+                        n.sign(&format!("ESP32:v={}:bio={}", ev.value, ev.ticks));
                     }
                     o.play = Some(vec![(C6, 25)]);
                     o.redraw = true;

@@ -10,11 +10,15 @@ $src  = Join-Path $root 'chocobao'
 $dst  = Join-Path $xous 'apps-dabao\chocobao'
 $srcSb = Join-Path $root 'chocosandbox'
 $dstSb = Join-Path $xous 'apps-dabao\chocosandbox'
+$srcSg = Join-Path $root 'chocosigner'
+$dstSg = Join-Path $xous 'apps-dabao\chocosigner'
 $env:Path += ";$env:USERPROFILE\.cargo\bin"
 
 robocopy $src $dst /MIR /XD target /NFL /NDL /NJH /NJS /NP | Out-Null
 if ($LASTEXITCODE -ge 8) { throw "robocopy failed ($LASTEXITCODE)" }
 robocopy $srcSb $dstSb /MIR /XD target /NFL /NDL /NJH /NJS /NP | Out-Null
+if ($LASTEXITCODE -ge 8) { throw "robocopy failed ($LASTEXITCODE)" }
+robocopy $srcSg $dstSg /MIR /XD target /NFL /NDL /NJH /NJS /NP | Out-Null
 if ($LASTEXITCODE -ge 8) { throw "robocopy failed ($LASTEXITCODE)" }
 $global:LASTEXITCODE = 0
 
@@ -26,6 +30,12 @@ if ($text -notmatch 'apps-dabao/chocobao') {
     Write-Host 'added apps-dabao/chocobao to the xous-core workspace'
 }
 $text = [IO.File]::ReadAllText($cargo)
+if ($text -notmatch 'apps-dabao/chocosigner') {
+    $text = $text -replace '(\r?\n)(\s*)"apps-dabao/chocobao",', "`$1`$2`"apps-dabao/chocobao`",`$1`$2`"apps-dabao/chocosigner`","
+    [IO.File]::WriteAllText($cargo, $text)
+    Write-Host 'added apps-dabao/chocosigner to the xous-core workspace'
+}
+$text = [IO.File]::ReadAllText($cargo)
 if ($text -notmatch 'apps-dabao/chocosandbox') {
     $text = $text -replace '(\r?\n)(\s*)"apps-dabao/chocobao",', "`$1`$2`"apps-dabao/chocobao`",`$1`$2`"apps-dabao/chocosandbox`","
     [IO.File]::WriteAllText($cargo, $text)
@@ -33,7 +43,7 @@ if ($text -notmatch 'apps-dabao/chocosandbox') {
 }
 
 Push-Location $xous
-try { cargo xtask dabao chocobao chocosandbox; if ($LASTEXITCODE) { throw "build failed ($LASTEXITCODE)" } } finally { Pop-Location }
+try { cargo xtask dabao chocobao; if ($LASTEXITCODE) { throw "build failed ($LASTEXITCODE)" } } finally { Pop-Location }
 
 $rel = Join-Path $xous 'target\riscv32imac-unknown-xous-elf\release'
 # the app region (0xDA000 + signature block) is all there is

@@ -73,3 +73,16 @@ index 3191ed7..1bed869 100644
              bao1x_api::PERCLK,
              i2c_ifram,
              &udma_global,
+diff --git a/xtask/src/main.rs b/xtask/src/main.rs
+index 70f3bbb..cb792be 100644
+--- a/xtask/src/main.rs
++++ b/xtask/src/main.rs
+@@ -921,7 +921,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
+ 
+             // minimal set of services for app development on a dabao. Need to save space for the app itself!
+             let bao_rram_pkgs =
+-                ["xous-ticktimer", "keystore", "xous-log", "xous-names", "usb-bao1x", "bao1x-hal-service"]
++                ["xous-ticktimer", "keystore", "xous-log", "xous-names", "usb-bao1x", "bao1x-hal-service", "chocosigner", "chocosandbox"]
+                     .to_vec();
+             let bao_app_pkgs: Vec<&'static str> = [].to_vec();
+ 

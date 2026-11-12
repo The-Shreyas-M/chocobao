@@ -22,7 +22,7 @@ A plain log file proves nothing: you can edit a number and nobody can tell.
 | 1. Sensor node | An ESP32 sends an 8-bit reading as 10 pulses on one wire | the sensor stays cheap and untrusted |
 | 2. Timestamp | A Baochip **I/O (BIO) core** watches the wire once per microsecond and records its own clock at the first edge | the time does not depend on what the CPU is doing (screen, USB, music), so software load cannot smear it |
 | 3. Sign | The app signs `CHOCONOTARY1\|counter\|ms\|event\|bio-ticks` with Ed25519 | the signature covers the reading, the order (counter) and the chip-clock stamp |
-| 4. Key safety | The key is made by the chip's hardware random-number generator and lives on its own memory page of the main app. Another process (the sandbox) that tries to read it is **killed by the kernel**; the key still signs | a misbehaving game or plugin cannot steal or tamper with it |
+| 4. Key safety | The key is made by the chip's hardware random-number generator inside its **own process** (`chocosigner`). The app only asks it for signatures; no message returns the key. A third process (the sandbox) that tries to read the key's page is **killed by the kernel**; the signer still signs with the same key | a bug in a game or in the app cannot read or change the key |
 | 5. Proof out | Hold OK: the device types the proof into any PC (USB keyboard, no driver). `tools/verify.py` checks it with pure Python | no cloud, no app to trust, 30 lines to audit |
 
 Change one character of the reading and the verifier says INVALID. Replay an old line out of order and the counter check complains.
@@ -49,7 +49,7 @@ Change one character of the reading and the verifier says INVALID. Replay an old
 | The sensor can lie | the Notary proves *when this value arrived and that nobody changed it afterwards*, not that the sensor told the truth |
 | Developer mode | the board is not locked down; someone holding the board with a debugger is out of scope |
 | Key is RAM only | it is new every power-up; the public key must be recorded when the first proof is made |
-| Code in the main app can read the key | only *other processes* are isolated; moving the signer into its own process is the next step |
+| The app can ask for any signature | it cannot read the key, but whatever it sends gets signed; the screen shows what is signed |
 | The BIO clock count is 30 bits | it wraps about every 1.5 s, so it places an event inside a second; the millisecond field orders events across seconds |
 
 ## Why it is worth a prize

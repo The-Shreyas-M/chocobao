@@ -29,7 +29,7 @@ A sensor node (an ESP32) sends a reading to the Baochip over one wire. An I/O co
 | USB HID | types secrets into any PC, no driver; secrets are never shown on the OLED |
 | UDMA I2C | OLED at 1 MHz, about 11 ms per full frame |
 | ReRAM (via keystore app slots) | settings, high scores and seen help screens saved |
-| Xous MMU, two processes | Lab -> MMU demo: a sandbox process reads the Notary's key page address, the kernel kills only the sandbox, the key still signs |
+| Xous MMU, three processes | the Notary key lives in its own process (`chocosigner`); Lab -> MMU demo: a sandbox process reads the key's page, the kernel kills only the sandbox, the signer still signs with the same key |
 | BIO event capture | an I/O core timestamps pulses from an ESP32 sensor node; the Notary signs each reading |
 
 ## Quick start
@@ -83,15 +83,15 @@ First time you open any app a help screen explains its keys.
 | 3 | Save lines to `proofs.txt`, run `python tools/verify.py proofs.txt` |
 | Result | `VALID` for every line; change one character and it says `INVALID` |
 
-The key is made by the TRNG and lives in RAM only. It proves that whoever held that key signed that text. It does **not** prove the clock is true or protect against someone with physical access to the board.
+The key is made by the TRNG inside the signer process and lives in RAM only. It proves that whoever held that key signed that text. It does **not** prove the clock is true or protect against someone with physical access to the board.
 
 ## Status and honest limits
 
 | Item | State |
 |---|---|
 | Board mode | developer mode: secrets are not protected against someone holding the board |
-| Notary isolation | the key sits on its own page of the main app; the sandbox process cannot read it. Code inside the main app can |
-| MMU demo | two real processes in one image; tested on the board as described in docs |
+| Notary isolation | the key lives in a separate signer process; the app cannot read it. The app can still ask for signatures |
+| MMU demo | three real processes (app, signer, sandbox) in one firmware set; the sandbox can be killed once per power-up |
 | Saved settings | stored via the keystore service's app slots; boots and runs stable, persistence across a restart still being confirmed |
 | Games and tools | tested on the board by hand, the newest ones less than the older ones |
 | Flash | app image uses about 800 KB of 870 KB |
@@ -100,7 +100,10 @@ The key is made by the TRNG and lives in RAM only. It proves that whoever held t
 
 | Path | Contents |
 |---|---|
-| `chocobao/` | the firmware (Rust) |
+| `chocobao/` | the main app (Rust) |
+| `chocosigner/` | the signer process: holds the Ed25519 key |
+| `chocosandbox/` | the untrusted process for the MMU demo |
+| `VIDEOSCRIPT.md` | script for the demo video |
 | `tools/` | build, flash, verify, MIDI converter |
 | `patches/` | the small changes to xous-core |
 | `docs/` | design notes, plan, todo |

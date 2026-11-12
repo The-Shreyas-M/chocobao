@@ -1,6 +1,7 @@
 mod app;
 mod bootmode;
 mod controls;
+mod demo;
 mod diag;
 mod display;
 mod events;

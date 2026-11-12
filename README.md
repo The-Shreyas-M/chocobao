@@ -4,6 +4,10 @@ A pocket multitool and arcade for the **Baochip-1x (Dabao board)**: Rust on the 
 
 Made by Shreyas for the Dabao Open Hackathon. License: Apache-2.0.
 
+## The idea in one minute
+
+A sensor node (an ESP32) sends a reading to the Baochip over one wire. An I/O core timestamps it without the CPU, the Notary signs it with a key that other processes cannot read, and anyone can check the proof offline with a short Python script. Change one character and the check fails. Full story, protocol and limits: [docs/STORY.md](docs/STORY.md).
+
 ## What it does
 
 | Area | Contents |

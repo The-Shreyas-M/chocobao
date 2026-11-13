@@ -12,7 +12,7 @@ A sensor node (an ESP32) sends a reading to the Baochip over one wire. An I/O co
 
 | Area | Contents |
 |---|---|
-| Games (18) | Doom (5 levels), Jetpack Joyride, Road Rush, Subway Run, Ninja Run, Star Drifter (3D space), Space Invaders, Tetris, Pac-Man, Tower Blocks, Maze (3 levels), Snake, Pong, Flappy Bird, Minesweeper, Solitaire, 2048, Mempool Dodger |
+| Games (21) | Doom (5 levels), Jetpack Joyride, Road Rush, Subway Run, Ninja Run, Star Drifter (3D space), Space Invaders, Tetris, Pac-Man, Tower Blocks, Maze (3 levels), Lunar Lander, Breakout, Snake, Pong, Flappy Bird, Minesweeper, Solitaire, 2048, Mempool Dodger, Magic 8-ball |
 | Music | 4 songs from MIDI files played by a BIO core on the buzzer, metronome |
 | Tools | Password maker (types into the PC), passphrase, PIN, dice, random number, stopwatch, timer, calculator, converters, morse trainer, text presets, BIP-39 seed words |
 | Lab | Mandelbrot zoom, button scope, TRNG health test, **Notary** (Ed25519 signed events), **MMU demo** |
@@ -25,7 +25,7 @@ A sensor node (an ESP32) sends a reading to the Baochip over one wire. An I/O co
 |---|---|
 | BIO cores (I/O coprocessors) | buzzer tone generator running on its own core, notes queued ahead so music never stutters |
 | Hardware TRNG | passwords, seeds, dice, game randomness, Notary keys, TRNG health test |
-| Ed25519 | Notary signs `CHOCONOTARY1\|n\|ms\|event`; `tools/verify.py` checks it on the PC |
+| Ed25519 on the chip's curve25519 library (`curve25519-dalek-bao1x`, hardware SHA) | Notary signs `CHOCONOTARY1\|n\|ms\|event`; `tools/verify.py` checks it on the PC |
 | USB HID | types secrets into any PC, no driver; secrets are never shown on the OLED |
 | UDMA I2C | OLED at 1 MHz, about 11 ms per full frame |
 | ReRAM (via keystore app slots) | settings, high scores and seen help screens saved |
@@ -38,7 +38,7 @@ A sensor node (an ESP32) sends a reading to the Baochip over one wire. An I/O co
 |---|---|
 | 1 | Build the hardware: [BUILD_GUIDE.md](BUILD_GUIDE.md) (buttons, OLED, buzzer, LED) |
 | 2 | Put the board in bootloader mode: hold PROG, tap RESET, release PROG |
-| 3 | Flash the three images (below) |
+| 3 | Flash the three prebuilt images from the [latest release](https://github.com/The-Shreyas-M/chocobao/releases/latest) (`loader.uf2`, `xous.uf2`, `apps.uf2`), or build them (below) |
 | 4 | Plug in and play |
 
 ## Build from source (Windows)
